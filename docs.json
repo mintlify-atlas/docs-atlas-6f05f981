@@ -82,6 +82,7 @@
             "pages": [
               "api/rest/overview",
               "api/rest/backtests",
+              "api/rest/optimizations",
               "api/rest/authentication"
             ]
           }

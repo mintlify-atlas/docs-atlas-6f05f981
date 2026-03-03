@@ -1,0 +1,367 @@
+---
+title: Optimization endpoints
+description: Parameter search and optimization for trading strategies
+---
+
+## Create optimization
+
+<CodeGroup>
+```bash POST /optimizations
+curl -X POST http://127.0.0.1:8000/optimizations \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "MA Crossover Optimization",
+    "description": "Find optimal periods for moving average crossover",
+    "search_space": {
+      "parameters": [
+        {
+          "name": "short_period",
+          "kind": "int_range",
+          "low": 5,
+          "high": 50
+        },
+        {
+          "name": "long_period",
+          "kind": "int_range",
+          "low": 20,
+          "high": 200
+        }
+      ]
+    },
+    "strategy": "random",
+    "max_trials": 100,
+    "concurrency": 4,
+    "objective_metric": "sharpe_ratio",
+    "direction": "maximize",
+    "base_backtest": {
+      "symbols": ["AAPL"],
+      "start_date": "2023-01-01T00:00:00Z",
+      "end_date": "2023-12-31T23:59:59Z",
+      "resolution": "day",
+      "strategy": {
+        "name": "moving_average_crossover",
+        "params": {}
+      },
+      "initial_capital": 1000000.0
+    }
+  }'
+```
+</CodeGroup>
+
+Create and start a new parameter optimization run. The optimization executes asynchronously and returns immediately with an `optimization_id` and initial status.
+
+### Request body
+
+<ParamField path="name" type="string" required>
+  Descriptive name for the optimization run (1-256 chars)
+  
+  Example: `"MA Crossover Optimization"`
+</ParamField>
+
+<ParamField path="description" type="string">
+  Optional description (max 1024 chars)
+  
+  Example: `"Find optimal periods for moving average crossover"`
+</ParamField>
+
+<ParamField path="search_space" type="object" required>
+  Parameter search space configuration
+  
+  <ParamField path="search_space.parameters" type="array" required>
+    List of parameters to optimize (1-50 parameters)
+    
+    <Expandable title="Parameter definition">
+      <ParamField path="name" type="string" required>
+        Parameter name (1-128 chars)
+      </ParamField>
+      
+      <ParamField path="kind" type="string" required>
+        Parameter type
+        
+        Options: `float_range`, `int_range`, `log_uniform`, `choice`
+      </ParamField>
+      
+      <ParamField path="low" type="number">
+        Lower bound (for range types)
+      </ParamField>
+      
+      <ParamField path="high" type="number">
+        Upper bound (for range types)
+      </ParamField>
+      
+      <ParamField path="values" type="array">
+        Discrete values (for choice type)
+      </ParamField>
+    </Expandable>
+  </ParamField>
+</ParamField>
+
+<ParamField path="strategy" type="string" default="random">
+  Search strategy
+  
+  Options: `grid`, `random`, `bayesian`
+</ParamField>
+
+<ParamField path="max_trials" type="integer" default="100">
+  Maximum number of trials to run (1-10,000)
+</ParamField>
+
+<ParamField path="concurrency" type="integer" default="4">
+  Maximum concurrent trials (1-128)
+</ParamField>
+
+<ParamField path="objective_metric" type="string" default="sharpe_ratio">
+  Metric to optimize (max 64 chars)
+  
+  Common options: `sharpe_ratio`, `sortino_ratio`, `calmar_ratio`, `total_return`, `max_drawdown`
+</ParamField>
+
+<ParamField path="direction" type="string" default="maximize">
+  Optimization direction
+  
+  Options: `maximize`, `minimize`
+</ParamField>
+
+<ParamField path="base_backtest" type="object" required>
+  Base backtest configuration that trials will override with sampled parameters
+  
+  Same structure as `POST /backtests` request body
+</ParamField>
+
+<ParamField path="exploration_weight" type="number" default="0.3">
+  Exploration vs exploitation weight for Bayesian optimization (0.0-1.0)
+</ParamField>
+
+<ParamField path="grid_steps" type="integer" default="5">
+  Steps per parameter for grid search (2-100)
+</ParamField>
+
+<ParamField path="ray_cluster" type="object">
+  Optional Ray cluster configuration for distributed execution
+  
+  <ParamField path="ray_cluster.address" type="string" default="ray://localhost:10001">
+    Ray cluster address
+  </ParamField>
+  
+  <ParamField path="ray_cluster.namespace" type="string" default="glowback">
+    Ray namespace
+  </ParamField>
+  
+  <ParamField path="ray_cluster.max_concurrent_tasks" type="integer" default="4">
+    Maximum concurrent Ray tasks (1-256)
+  </ParamField>
+  
+  <ParamField path="ray_cluster.num_cpus" type="number" default="1.0">
+    CPUs per task
+  </ParamField>
+  
+  <ParamField path="ray_cluster.num_gpus" type="number" default="0.0">
+    GPUs per task
+  </ParamField>
+</ParamField>
+
+### Response
+
+<ResponseField name="optimization_id" type="string">
+  Unique identifier for the optimization run
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Optimization name
+</ResponseField>
+
+<ResponseField name="state" type="string">
+  Current state: `pending`, `running`, `completed`, `failed`, `cancelled`
+</ResponseField>
+
+<ResponseField name="strategy" type="string">
+  Search strategy being used
+</ResponseField>
+
+<ResponseField name="objective_metric" type="string">
+  Metric being optimized
+</ResponseField>
+
+<ResponseField name="direction" type="string">
+  Optimization direction
+</ResponseField>
+
+<ResponseField name="max_trials" type="integer">
+  Maximum trials configured
+</ResponseField>
+
+<ResponseField name="trials_completed" type="integer">
+  Number of completed trials
+</ResponseField>
+
+<ResponseField name="trials_failed" type="integer">
+  Number of failed trials
+</ResponseField>
+
+<ResponseField name="trials_running" type="integer">
+  Number of currently running trials
+</ResponseField>
+
+<ResponseField name="best_trial" type="object">
+  Best trial found so far (null if none completed)
+</ResponseField>
+
+<ResponseField name="created_at" type="datetime">
+  Creation timestamp
+</ResponseField>
+
+<ResponseField name="started_at" type="datetime">
+  Start timestamp
+</ResponseField>
+
+<ResponseField name="finished_at" type="datetime">
+  Completion timestamp
+</ResponseField>
+
+## List optimizations
+
+<CodeGroup>
+```bash GET /optimizations
+curl http://127.0.0.1:8000/optimizations?limit=50 \
+  -H "X-API-Key: your-api-key"
+```
+</CodeGroup>
+
+List all optimization runs, most recent first.
+
+### Query parameters
+
+<ParamField path="limit" type="integer" default="50">
+  Maximum number of results (1-200)
+</ParamField>
+
+### Response
+
+Returns an array of `OptimizationStatus` objects.
+
+## Get optimization status
+
+<CodeGroup>
+```bash GET /optimizations/{opt_id}
+curl http://127.0.0.1:8000/optimizations/{opt_id} \
+  -H "X-API-Key: your-api-key"
+```
+</CodeGroup>
+
+Get the current status of an optimization run.
+
+### Path parameters
+
+<ParamField path="opt_id" type="string" required>
+  Optimization ID
+</ParamField>
+
+### Response
+
+Returns an `OptimizationStatus` object with current progress.
+
+## Get optimization results
+
+<CodeGroup>
+```bash GET /optimizations/{opt_id}/results
+curl http://127.0.0.1:8000/optimizations/{opt_id}/results \
+  -H "X-API-Key: your-api-key"
+```
+</CodeGroup>
+
+Retrieve detailed results including all trials.
+
+### Path parameters
+
+<ParamField path="opt_id" type="string" required>
+  Optimization ID
+</ParamField>
+
+### Response
+
+<ResponseField name="optimization_id" type="string">
+  Optimization ID
+</ResponseField>
+
+<ResponseField name="state" type="string">
+  Final state
+</ResponseField>
+
+<ResponseField name="best_trial" type="object">
+  Best trial details
+  
+  <Expandable title="Trial structure">
+    <ResponseField name="trial_id" type="string">
+      Trial identifier
+    </ResponseField>
+    
+    <ResponseField name="trial_number" type="integer">
+      Trial number
+    </ResponseField>
+    
+    <ResponseField name="status" type="string">
+      Trial status
+    </ResponseField>
+    
+    <ResponseField name="parameters" type="object">
+      Parameter values used
+    </ResponseField>
+    
+    <ResponseField name="objective" type="number">
+      Objective metric value
+    </ResponseField>
+    
+    <ResponseField name="metrics" type="object">
+      All performance metrics
+    </ResponseField>
+    
+    <ResponseField name="duration_seconds" type="integer">
+      Trial duration
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="all_trials" type="array">
+  Complete list of all trials
+</ResponseField>
+
+<ResponseField name="total_duration_seconds" type="integer">
+  Total optimization duration
+</ResponseField>
+
+<ResponseField name="search_space" type="object">
+  Search space configuration used
+</ResponseField>
+
+## Cancel optimization
+
+<CodeGroup>
+```bash POST /optimizations/{opt_id}/cancel
+curl -X POST http://127.0.0.1:8000/optimizations/{opt_id}/cancel \
+  -H "X-API-Key: your-api-key"
+```
+</CodeGroup>
+
+Cancel a running optimization.
+
+### Path parameters
+
+<ParamField path="opt_id" type="string" required>
+  Optimization ID
+</ParamField>
+
+### Response
+
+Returns `204 No Content` on success.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api/rest/authentication">
+    API key setup and security
+  </Card>
+  <Card title="Backtest endpoints" icon="flask" href="/api/rest/backtests">
+    Run individual backtests
+  </Card>
+</CardGroup>
