@@ -1,0 +1,390 @@
+---
+title: 'Data management API'
+description: 'Data providers, storage, and catalog for market data'
+---
+
+## DataManager
+
+Coordinates all data operations including providers, storage, and caching.
+
+```rust
+pub struct DataManager {
+    pub catalog: DataCatalog,
+    pub storage: StorageManager,
+    pub cache: CacheManager,
+    pub providers: Vec<Box<dyn DataProvider>>,
+}
+```
+
+<ParamField path="catalog" type="DataCatalog">
+  SQLite-backed metadata catalog
+</ParamField>
+
+<ParamField path="storage" type="StorageManager">
+  Parquet-based storage manager
+</ParamField>
+
+<ParamField path="cache" type="CacheManager">
+  In-memory data cache
+</ParamField>
+
+<ParamField path="providers" type="Vec<Box<dyn DataProvider>>">
+  Data providers (CSV, APIs, etc.)
+</ParamField>
+
+**Methods:**
+
+```rust
+impl DataManager {
+    pub async fn new() -> GbResult<Self>
+    pub fn add_provider(&mut self, provider: Box<dyn DataProvider>)
+    pub async fn load_data(
+        &mut self,
+        symbol: &Symbol,
+        start_date: DateTime<Utc>,
+        end_date: DateTime<Utc>,
+        resolution: Resolution,
+    ) -> GbResult<Vec<Bar>>
+}
+```
+
+**Example:**
+
+```rust
+let mut data_manager = DataManager::new().await?;
+
+// Add CSV data provider
+let csv_provider = Box::new(CsvDataProvider::new("./data"));
+data_manager.add_provider(csv_provider);
+
+// Load market data
+let bars = data_manager.load_data(
+    &Symbol::equity("AAPL"),
+    start_date,
+    end_date,
+    Resolution::Day
+).await?;
+```
+
+## Data providers
+
+### DataProvider
+
+Trait for data providers (CSV, APIs, databases, etc.).
+
+```rust
+#[async_trait]
+pub trait DataProvider: Send + Sync + std::fmt::Debug {
+    fn supports_symbol(&self, symbol: &Symbol) -> bool;
+    
+    async fn fetch_bars(
+        &mut self,
+        symbol: &Symbol,
+        start_date: DateTime<Utc>,
+        end_date: DateTime<Utc>,
+        resolution: Resolution,
+    ) -> GbResult<Vec<Bar>>;
+    
+    fn name(&self) -> &str;
+    fn config(&self) -> serde_json::Value;
+}
+```
+
+### CsvDataProvider
+
+CSV data provider for loading local CSV files.
+
+```rust
+pub struct CsvDataProvider {
+    pub name: String,
+    pub data_directory: std::path::PathBuf,
+    pub file_pattern: String,
+}
+```
+
+<ParamField path="data_directory" type="PathBuf">
+  Directory containing CSV files
+</ParamField>
+
+<ParamField path="file_pattern" type="String">
+  File naming pattern (e.g., "{symbol}_{resolution}.csv")
+</ParamField>
+
+**Methods:**
+
+```rust
+impl CsvDataProvider {
+    pub fn new<P: AsRef<Path>>(data_directory: P) -> Self
+    pub fn with_pattern(mut self, pattern: &str) -> Self
+}
+```
+
+**Example:**
+
+```rust
+let provider = CsvDataProvider::new("./market_data")
+    .with_pattern("{symbol}_{exchange}_{resolution}.csv");
+
+let bars = provider.fetch_bars(
+    &Symbol::equity("AAPL"),
+    start_date,
+    end_date,
+    Resolution::Day
+).await?;
+```
+
+### SampleDataProvider
+
+Sample data provider for testing and demos.
+
+```rust
+pub struct SampleDataProvider {
+    pub name: String,
+}
+```
+
+**Supported symbols:**
+- Equities: AAPL, GOOGL, MSFT, TSLA, SPY
+- Crypto: BTC-USD, ETH-USD, SOL-USD, DOGE-USD, ADA-USD
+- Binance: BTCUSDT, ETHUSDT, SOLUSDT, DOGEUSDT, ADAUSDT
+
+**Example:**
+
+```rust
+let provider = SampleDataProvider::new();
+
+// Generates synthetic random walk data
+let bars = provider.fetch_bars(
+    &Symbol::equity("AAPL"),
+    start_date,
+    end_date,
+    Resolution::Day
+).await?;
+```
+
+### AlphaVantageProvider
+
+Alpha Vantage API provider.
+
+```rust
+pub struct AlphaVantageProvider {
+    pub name: String,
+    pub api_key: String,
+    pub client: reqwest::Client,
+}
+```
+
+<ParamField path="api_key" type="String">
+  Alpha Vantage API key
+</ParamField>
+
+**Methods:**
+
+```rust
+impl AlphaVantageProvider {
+    pub fn new(api_key: String) -> Self
+}
+```
+
+**Example:**
+
+```rust
+let provider = AlphaVantageProvider::new("your_api_key".to_string());
+let bars = provider.fetch_bars(
+    &Symbol::equity("AAPL"),
+    start_date,
+    end_date,
+    Resolution::Day  // Only Day resolution supported on free tier
+).await?;
+```
+
+## Storage
+
+### StorageManager
+
+Parquet-based storage for bar data.
+
+```rust
+pub struct StorageManager {
+    pub data_root: PathBuf,
+}
+```
+
+<ParamField path="data_root" type="PathBuf">
+  Root directory for data storage
+</ParamField>
+
+**Methods:**
+
+```rust
+impl StorageManager {
+    pub fn new<P: AsRef<Path>>(data_root: P) -> GbResult<Self>
+    
+    pub async fn save_bars(
+        &self,
+        symbol: &Symbol,
+        bars: &[Bar],
+        resolution: Resolution,
+    ) -> GbResult<()>
+    
+    pub async fn load_bars(
+        &self,
+        symbol: &Symbol,
+        start_date: DateTime<Utc>,
+        end_date: DateTime<Utc>,
+        resolution: Resolution,
+    ) -> GbResult<Vec<Bar>>
+    
+    pub fn list_symbols(&self) -> GbResult<Vec<Symbol>>
+    pub fn get_stats(&self) -> GbResult<StorageStats>
+}
+```
+
+**Storage structure:**
+
+```
+data_root/
+├── NASDAQ/
+│   └── Equity/
+│       ├── AAPL/
+│       │   ├── Day.parquet
+│       │   └── Hour.parquet
+│       └── GOOGL/
+│           └── Day.parquet
+└── BINANCE/
+    └── Crypto/
+        └── BTC-USD/
+            └── Day.parquet
+```
+
+**Example:**
+
+```rust
+let storage = StorageManager::new("./data")?;
+
+// Save bars
+storage.save_bars(
+    &Symbol::equity("AAPL"),
+    &bars,
+    Resolution::Day
+).await?;
+
+// Load bars
+let loaded = storage.load_bars(
+    &Symbol::equity("AAPL"),
+    start_date,
+    end_date,
+    Resolution::Day
+).await?;
+
+// Get storage stats
+let stats = storage.get_stats()?;
+println!("Total files: {}", stats.total_files);
+println!("Total size: {:.2} MB", stats.total_size_mb());
+```
+
+### StorageStats
+
+Storage statistics.
+
+```rust
+pub struct StorageStats {
+    pub total_files: u64,
+    pub total_size_bytes: u64,
+    pub data_root: PathBuf,
+}
+```
+
+**Methods:**
+
+```rust
+impl StorageStats {
+    pub fn total_size_mb(&self) -> f64
+    pub fn total_size_gb(&self) -> f64
+}
+```
+
+## Catalog
+
+### DataCatalog
+
+SQLite-backed metadata catalog.
+
+```rust
+pub struct DataCatalog {
+    connection: Connection,
+    symbols: HashMap<String, SymbolInfo>,
+}
+```
+
+**Methods:**
+
+```rust
+impl DataCatalog {
+    pub async fn new<P: AsRef<Path>>(db_path: P) -> GbResult<Self>
+    
+    pub async fn register_symbol_data(
+        &mut self,
+        symbol: &Symbol,
+        start_date: DateTime<Utc>,
+        end_date: DateTime<Utc>,
+        resolution: Resolution,
+    ) -> GbResult<()>
+    
+    pub async fn get_symbol_info(&self, symbol: &Symbol) -> GbResult<Option<SymbolInfo>>
+    pub async fn list_available_symbols(&self) -> GbResult<Vec<Symbol>>
+    pub async fn get_catalog_stats(&self) -> GbResult<CatalogStats>
+}
+```
+
+**Example:**
+
+```rust
+let catalog = DataCatalog::new("./catalog.db").await?;
+
+// Register new data
+catalog.register_symbol_data(
+    &Symbol::equity("AAPL"),
+    start_date,
+    end_date,
+    Resolution::Day
+).await?;
+
+// List available symbols
+let symbols = catalog.list_available_symbols().await?;
+
+// Get catalog statistics
+let stats = catalog.get_catalog_stats().await?;
+println!("Total symbols: {}", stats.total_symbols);
+println!("Asset classes: {}", stats.asset_classes);
+```
+
+### SymbolInfo
+
+Metadata for a symbol's available data.
+
+```rust
+pub struct SymbolInfo {
+    pub symbol: Symbol,
+    pub first_date: DateTime<Utc>,
+    pub last_date: DateTime<Utc>,
+    pub resolution: Resolution,
+    pub record_count: u64,
+    pub last_updated: DateTime<Utc>,
+}
+```
+
+### CatalogStats
+
+Catalog statistics.
+
+```rust
+pub struct CatalogStats {
+    pub total_symbols: u64,
+    pub asset_classes: u64,
+    pub exchanges: u64,
+    pub total_records: u64,
+    pub earliest_date: Option<DateTime<Utc>>,
+    pub latest_date: Option<DateTime<Utc>>,
+}
+```

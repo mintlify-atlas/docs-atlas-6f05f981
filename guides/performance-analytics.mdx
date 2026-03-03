@@ -1,0 +1,450 @@
+---
+title: Performance analytics
+description: Analyze and interpret backtest performance metrics
+---
+
+GlowBack calculates comprehensive performance metrics to evaluate trading strategies. These metrics help you understand risk-adjusted returns, drawdowns, and trade statistics.
+
+## Performance metrics overview
+
+The `PerformanceMetrics` struct contains all calculated metrics:
+
+```rust
+pub struct PerformanceMetrics {
+    // Returns
+    pub total_return: Decimal,
+    pub annualized_return: Decimal,
+    
+    // Risk
+    pub volatility: Decimal,
+    pub max_drawdown: Decimal,
+    pub max_drawdown_duration_days: Option<u32>,
+    
+    // Risk-adjusted returns
+    pub sharpe_ratio: Option<Decimal>,
+    pub sortino_ratio: Option<Decimal>,
+    pub calmar_ratio: Option<Decimal>,
+    
+    // Risk measures
+    pub var_95: Option<Decimal>,
+    pub cvar_95: Option<Decimal>,
+    pub skewness: Option<Decimal>,
+    pub kurtosis: Option<Decimal>,
+    
+    // Trade statistics
+    pub total_trades: u64,
+    pub win_rate: Decimal,
+    pub profit_factor: Option<Decimal>,
+    pub average_win: Decimal,
+    pub average_loss: Decimal,
+    pub largest_win: Decimal,
+    pub largest_loss: Decimal,
+    pub total_commissions: Decimal,
+}
+```
+
+## Return metrics
+
+### Total return
+
+The overall return from start to end of the backtest:
+
+```rust
+let total_return = metrics.total_return * Decimal::from(100);
+println!("Total return: {:.2}%", total_return);
+```
+
+**Interpretation**: A total return of 25% means the portfolio grew by 25% over the backtest period.
+
+### Annualized return
+
+Return scaled to a per-year basis for comparison across different time periods:
+
+```rust
+let annualized = metrics.annualized_return * Decimal::from(100);
+println!("Annualized return: {:.2}%", annualized);
+```
+
+**Calculation**: Compounds the total return based on the number of trading days (252 per year):
+
+$$
+R_{annual} = \left(1 + R_{total}\right)^{\frac{1}{years}} - 1
+$$
+
+<Note>
+  Annualized returns allow fair comparison between strategies tested over different time periods.
+</Note>
+
+## Risk metrics
+
+### Volatility
+
+Annualized standard deviation of daily returns:
+
+```rust
+let vol = metrics.volatility * Decimal::from(100);
+println!("Volatility: {:.2}%", vol);
+```
+
+**Interpretation**:
+- Low volatility (< 10%): Conservative, stable returns
+- Medium volatility (10-20%): Moderate risk
+- High volatility (> 20%): Aggressive, high risk
+
+### Maximum drawdown
+
+Largest peak-to-trough decline in portfolio value:
+
+```rust
+let max_dd = metrics.max_drawdown * Decimal::from(100);
+println!("Max drawdown: {:.2}%", max_dd);
+```
+
+**Interpretation**:
+- Measures worst-case loss from a peak
+- Critical for understanding downside risk
+- A 30% max drawdown means you would have been down 30% at the worst point
+
+### Maximum drawdown duration
+
+Number of days the portfolio was underwater (below previous peak):
+
+```rust
+if let Some(duration) = metrics.max_drawdown_duration_days {
+    println!("Max drawdown duration: {} days", duration);
+}
+```
+
+**Interpretation**: Long drawdown periods can test investor patience and indicate slow recovery.
+
+## Risk-adjusted returns
+
+### Sharpe ratio
+
+Measures excess return per unit of risk:
+
+```rust
+if let Some(sharpe) = metrics.sharpe_ratio {
+    println!("Sharpe ratio: {:.2}", sharpe);
+}
+```
+
+**Calculation**:
+
+$$
+Sharpe = \frac{R_{annual} - R_{risk\_free}}{\sigma_{annual}}
+$$
+
+**Interpretation**:
+- < 1.0: Poor risk-adjusted returns
+- 1.0 - 2.0: Good
+- 2.0 - 3.0: Very good
+- \> 3.0: Excellent
+
+<Accordion title="Sharpe ratio example">
+  A strategy with 15% annualized return, 10% volatility, and 2% risk-free rate:
+  
+  $$
+  Sharpe = \frac{0.15 - 0.02}{0.10} = 1.30
+  $$
+  
+  This is a good risk-adjusted return.
+</Accordion>
+
+### Sortino ratio
+
+Like Sharpe ratio, but only considers downside volatility:
+
+```rust
+if let Some(sortino) = metrics.sortino_ratio {
+    println!("Sortino ratio: {:.2}", sortino);
+}
+```
+
+**Interpretation**: Higher is better. Sortino ratio is typically higher than Sharpe ratio because it ignores upside volatility.
+
+<Note>
+  Sortino ratio is preferred when upside volatility is desirable (e.g., momentum strategies).
+</Note>
+
+### Calmar ratio
+
+Annualized return divided by maximum drawdown:
+
+```rust
+if let Some(calmar) = metrics.calmar_ratio {
+    println!("Calmar ratio: {:.2}", calmar);
+}
+```
+
+**Interpretation**:
+- Measures return per unit of worst-case loss
+- Values > 1.0 are generally good
+- Higher values indicate better recovery from drawdowns
+
+## Advanced risk metrics
+
+### Value at Risk (VaR)
+
+95% confidence level for maximum daily loss:
+
+```rust
+if let Some(var) = metrics.var_95 {
+    println!("VaR (95%): {:.2}%", var * Decimal::from(100));
+}
+```
+
+**Interpretation**: With 95% confidence, daily losses won't exceed this value. For example, a VaR of 2% means there's a 5% chance of losing more than 2% in a day.
+
+### Conditional Value at Risk (CVaR)
+
+Average loss beyond the VaR threshold:
+
+```rust
+if let Some(cvar) = metrics.cvar_95 {
+    println!("CVaR (95%): {:.2}%", cvar * Decimal::from(100));
+}
+```
+
+**Interpretation**: CVaR measures the expected loss when VaR is exceeded, providing insight into tail risk.
+
+### Skewness
+
+Asymmetry of the return distribution:
+
+```rust
+if let Some(skew) = metrics.skewness {
+    println!("Skewness: {:.3}", skew);
+}
+```
+
+**Interpretation**:
+- Negative skew: More frequent small gains, occasional large losses (bad)
+- Zero skew: Symmetric distribution
+- Positive skew: Occasional large gains, frequent small losses (good)
+
+### Kurtosis
+
+Tail heaviness of the return distribution:
+
+```rust
+if let Some(kurt) = metrics.kurtosis {
+    println!("Excess kurtosis: {:.3}", kurt);
+}
+```
+
+**Interpretation**:
+- Positive kurtosis: Fat tails, higher probability of extreme events
+- Negative kurtosis: Thin tails, lower probability of extreme events
+
+## Trade statistics
+
+### Win rate
+
+Percentage of profitable trades:
+
+```rust
+let win_rate = metrics.win_rate * Decimal::from(100);
+println!("Win rate: {:.2}%", win_rate);
+```
+
+**Interpretation**: A 60% win rate means 60% of trades were profitable. However, win rate alone doesn't indicate strategy quality—average win/loss sizes matter more.
+
+### Profit factor
+
+Ratio of gross profit to gross loss:
+
+```rust
+if let Some(pf) = metrics.profit_factor {
+    println!("Profit factor: {:.2}", pf);
+}
+```
+
+**Calculation**:
+
+$$
+Profit\ Factor = \frac{\sum Winning\ Trades}{\sum Losing\ Trades}
+$$
+
+**Interpretation**:
+- < 1.0: Losing strategy
+- 1.0 - 1.5: Marginal
+- 1.5 - 2.0: Good
+- \> 2.0: Excellent
+
+### Average win/loss
+
+Average profit per winning trade and average loss per losing trade:
+
+```rust
+println!("Average win: ${}", metrics.average_win);
+println!("Average loss: ${}", metrics.average_loss.abs());
+
+let win_loss_ratio = metrics.average_win / metrics.average_loss.abs();
+println!("Win/Loss ratio: {:.2}", win_loss_ratio);
+```
+
+**Interpretation**: A win/loss ratio > 1.0 means average wins are larger than average losses.
+
+<Accordion title="Win rate vs win/loss ratio">
+  You can have a profitable strategy with:
+  - **High win rate, low win/loss ratio**: Many small wins, few large losses
+  - **Low win rate, high win/loss ratio**: Few large wins, many small losses
+  
+  Example: 40% win rate with 3:1 win/loss ratio is profitable.
+</Accordion>
+
+### Largest win/loss
+
+Best and worst individual trades:
+
+```rust
+println!("Largest win: ${}", metrics.largest_win);
+println!("Largest loss: ${}", metrics.largest_loss.abs());
+```
+
+### Total commissions
+
+Total trading costs:
+
+```rust
+println!("Total commissions: ${}", metrics.total_commissions);
+
+let commission_pct = (metrics.total_commissions / initial_capital) * Decimal::from(100);
+println!("Commissions as % of capital: {:.2}%", commission_pct);
+```
+
+## Accessing metrics
+
+Metrics are automatically calculated from backtest results:
+
+```rust
+let result = engine.run_with_strategy(strategy).await?;
+
+if let Some(metrics) = result.performance_metrics {
+    // Access all metrics
+    println!("Sharpe: {:.2}", metrics.sharpe_ratio.unwrap_or_default());
+    println!("Max DD: {:.2}%", metrics.max_drawdown * Decimal::from(100));
+    println!("Win rate: {:.2}%", metrics.win_rate * Decimal::from(100));
+}
+```
+
+## Python API
+
+Access metrics from Python:
+
+```python
+import glowback as gb
+
+result = gb.run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T00:00:00Z"
+)
+
+# Access metrics dictionary
+metrics = result.metrics_summary
+print(f"Total return: {metrics['total_return']:.2f}%")
+print(f"Sharpe ratio: {metrics['sharpe_ratio']:.2f}")
+print(f"Max drawdown: {metrics['max_drawdown']:.2f}%")
+print(f"Win rate: {metrics['win_rate']:.2f}%")
+
+# Or get as DataFrame
+metrics_df = result.metrics_dataframe()
+print(metrics_df)
+```
+
+Available metrics in Python:
+
+<CodeGroup>
+
+```python Returns
+metrics['total_return']        # %
+metrics['annualized_return']   # %
+metrics['volatility']          # %
+```
+
+```python Risk
+metrics['max_drawdown']                 # %
+metrics['max_drawdown_duration_days']   # days
+metrics['var_95']                       # decimal
+metrics['cvar_95']                      # decimal
+```
+
+```python Risk-adjusted
+metrics['sharpe_ratio']
+metrics['sortino_ratio']
+metrics['calmar_ratio']
+```
+
+```python Trade stats
+metrics['total_trades']
+metrics['win_rate']        # %
+metrics['profit_factor']
+metrics['average_win']     # $
+metrics['average_loss']    # $
+metrics['largest_win']     # $
+metrics['largest_loss']    # $
+```
+
+</CodeGroup>
+
+## Metric interpretation guide
+
+<CardGroup cols={2}>
+  <Card title="Good strategy indicators" icon="check">
+    - Sharpe ratio > 1.5
+    - Sortino ratio > 2.0
+    - Max drawdown < 20%
+    - Profit factor > 1.5
+    - Positive skewness
+    - Consistent returns across periods
+  </Card>
+  
+  <Card title="Warning signs" icon="triangle-exclamation">
+    - Very high returns with low trades (luck)
+    - High win rate with large max drawdown
+    - Negative skewness (tail risk)
+    - Long drawdown duration
+    - High sensitivity to commissions
+  </Card>
+</CardGroup>
+
+## Comparing strategies
+
+When comparing multiple strategies, consider:
+
+1. **Risk-adjusted returns**: Compare Sharpe and Sortino ratios, not just returns
+2. **Consistency**: Check performance across different time periods
+3. **Drawdown profile**: Lower and shorter drawdowns are better
+4. **Trade statistics**: Ensure sufficient trade count for statistical significance
+5. **Robustness**: Test with different parameters and market conditions
+
+```rust
+let strategies = vec![
+    ("Strategy A", result_a),
+    ("Strategy B", result_b),
+    ("Strategy C", result_c),
+];
+
+for (name, result) in strategies {
+    if let Some(metrics) = result.performance_metrics {
+        println!("{}:", name);
+        println!("  Return: {:.2}%", metrics.annualized_return * Decimal::from(100));
+        println!("  Sharpe: {:.2}", metrics.sharpe_ratio.unwrap_or_default());
+        println!("  Max DD: {:.2}%", metrics.max_drawdown * Decimal::from(100));
+        println!();
+    }
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Strategy development" icon="code" href="/guides/strategy-development">
+    Improve your strategy based on metrics
+  </Card>
+  <Card title="Python usage" icon="python" href="/guides/python-usage">
+    Analyze results in Python with pandas
+  </Card>
+</CardGroup>

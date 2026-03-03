@@ -1,0 +1,390 @@
+---
+title: Strategy development
+description: Learn how to develop custom trading strategies in GlowBack
+---
+
+GlowBack provides a flexible strategy framework for building and testing trading algorithms. Strategies implement the `Strategy` trait and receive market events to make trading decisions.
+
+## Strategy trait
+
+All strategies must implement the `Strategy` trait, which provides hooks for market events, order events, and lifecycle management:
+
+```rust
+pub trait Strategy: Send + Sync {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String>;
+    fn on_market_event(&mut self, event: &MarketEvent, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn on_order_event(&mut self, event: &OrderEvent, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn on_day_end(&mut self, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn on_stop(&mut self, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn get_config(&self) -> &StrategyConfig;
+    fn get_metrics(&self) -> StrategyMetrics;
+}
+```
+
+## Strategy context
+
+The `StrategyContext` provides access to market data, portfolio state, and pending orders:
+
+```rust
+context.get_position(&symbol)        // Get current position for a symbol
+context.get_current_price(&symbol)   // Get latest market price
+context.get_market_data(&symbol)     // Get market data buffer
+context.get_available_cash()         // Get available cash
+context.get_portfolio_value()        // Get total portfolio value
+```
+
+## Strategy configuration
+
+Configure strategies using `StrategyConfig`:
+
+```rust
+let mut config = StrategyConfig::new(
+    "my_strategy".to_string(),
+    "My Trading Strategy".to_string()
+);
+
+config.add_symbol(Symbol::equity("AAPL"));
+config.set_parameter("short_period", 10);
+config.set_parameter("long_period", 20);
+config.set_parameter("position_size", 0.95);
+config.initial_capital = Decimal::from(100000);
+```
+
+## Example: Moving average crossover strategy
+
+<Steps>
+
+<Step title="Define the strategy struct">
+
+Create a struct to hold your strategy state:
+
+```rust
+use gb_types::strategy::*;
+use rust_decimal::Decimal;
+
+#[derive(Debug, Clone)]
+pub struct MovingAverageCrossoverStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    short_period: usize,
+    long_period: usize,
+    position_size: Decimal,
+    last_signal: Option<Signal>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Signal {
+    Buy,
+    Sell,
+}
+```
+
+</Step>
+
+<Step title="Implement the constructor">
+
+Create a constructor with default parameters:
+
+```rust
+impl MovingAverageCrossoverStrategy {
+    pub fn new(short_period: usize, long_period: usize) -> Self {
+        let mut config = StrategyConfig::new(
+            "ma_crossover".to_string(),
+            "Moving Average Crossover".to_string()
+        );
+        config.set_parameter("short_period", short_period);
+        config.set_parameter("long_period", long_period);
+        config.set_parameter("position_size", 0.95);
+
+        Self {
+            config,
+            initialized: false,
+            short_period,
+            long_period,
+            position_size: Decimal::new(95, 2),
+            last_signal: None,
+        }
+    }
+}
+```
+
+</Step>
+
+<Step title="Calculate technical indicators">
+
+Implement helper methods for calculating indicators:
+
+```rust
+impl MovingAverageCrossoverStrategy {
+    fn calculate_sma(&self, prices: &[Decimal], period: usize) -> Option<Decimal> {
+        if prices.len() < period {
+            return None;
+        }
+        
+        let sum: Decimal = prices.iter().rev().take(period).sum();
+        Some(sum / Decimal::from(period))
+    }
+    
+    fn get_recent_prices(&self, context: &StrategyContext, symbol: &Symbol) -> Vec<Decimal> {
+        if let Some(buffer) = context.get_market_data(symbol) {
+            buffer.get_bars(self.long_period + 1)
+                .iter()
+                .map(|bar| bar.close)
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+}
+```
+
+</Step>
+
+<Step title="Implement the Strategy trait">
+
+Implement the required trait methods:
+
+```rust
+impl Strategy for MovingAverageCrossoverStrategy {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+        self.config = config.clone();
+        self.short_period = self.config.get_parameter("short_period").unwrap_or(10);
+        self.long_period = self.config.get_parameter("long_period").unwrap_or(20);
+        self.position_size = self.config.get_parameter::<f64>("position_size")
+            .map(Decimal::from_f64_retain)
+            .flatten()
+            .unwrap_or(Decimal::new(95, 2));
+        self.initialized = true;
+        Ok(())
+    }
+    
+    fn on_market_event(
+        &mut self,
+        event: &MarketEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        if !self.initialized {
+            return Ok(vec![]);
+        }
+        
+        let symbol = event.symbol();
+        let prices = self.get_recent_prices(context, symbol);
+        
+        if prices.len() < self.long_period {
+            return Ok(vec![]);
+        }
+        
+        let short_ma = self.calculate_sma(&prices, self.short_period);
+        let long_ma = self.calculate_sma(&prices, self.long_period);
+        
+        if let (Some(short), Some(long)) = (short_ma, long_ma) {
+            let current_signal = if short > long {
+                Some(Signal::Buy)
+            } else if short < long {
+                Some(Signal::Sell)
+            } else {
+                None
+            };
+            
+            // Check for signal change
+            if current_signal != self.last_signal {
+                let mut actions = Vec::new();
+                
+                match current_signal {
+                    Some(Signal::Buy) => {
+                        // Open long position
+                        let available_cash = context.get_available_cash();
+                        if let Some(price) = context.get_current_price(symbol) {
+                            let quantity = (available_cash * self.position_size) / price;
+                            if quantity > Decimal::ZERO {
+                                let order = Order::market_order(
+                                    symbol.clone(),
+                                    Side::Buy,
+                                    quantity,
+                                    self.config.strategy_id.clone()
+                                );
+                                actions.push(StrategyAction::PlaceOrder(order));
+                            }
+                        }
+                    },
+                    Some(Signal::Sell) => {
+                        // Close long position
+                        if let Some(position) = context.get_position(symbol) {
+                            if position.quantity > Decimal::ZERO {
+                                let order = Order::market_order(
+                                    symbol.clone(),
+                                    Side::Sell,
+                                    position.quantity,
+                                    self.config.strategy_id.clone()
+                                );
+                                actions.push(StrategyAction::PlaceOrder(order));
+                            }
+                        }
+                    },
+                    None => {}
+                }
+                
+                self.last_signal = current_signal;
+                return Ok(actions);
+            }
+        }
+        
+        Ok(vec![])
+    }
+    
+    fn on_order_event(&mut self, _event: &OrderEvent, _context: &StrategyContext) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_day_end(&mut self, _context: &StrategyContext) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_stop(&mut self, _context: &StrategyContext) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn get_config(&self) -> &StrategyConfig {
+        &self.config
+    }
+    
+    fn get_metrics(&self) -> StrategyMetrics {
+        StrategyMetrics::new(self.config.strategy_id.clone())
+    }
+}
+```
+
+</Step>
+
+</Steps>
+
+## Built-in strategies
+
+GlowBack includes several built-in strategies for reference:
+
+<CardGroup cols={2}>
+  <Card title="Buy and hold" icon="chart-line">
+    Simple strategy that buys on the first bar and holds until the end
+  </Card>
+  <Card title="Moving average crossover" icon="arrows-cross">
+    Trades based on short-term and long-term moving average crossovers
+  </Card>
+  <Card title="Momentum" icon="rocket">
+    Buys when price momentum exceeds a threshold, sells on negative momentum
+  </Card>
+  <Card title="Mean reversion" icon="rotate">
+    Trades when price deviates significantly from its mean (z-score based)
+  </Card>
+  <Card title="RSI" icon="chart-mixed">
+    Trades based on Relative Strength Index overbought/oversold levels
+  </Card>
+</CardGroup>
+
+## Strategy actions
+
+Strategies return `StrategyAction` to communicate with the engine:
+
+```rust
+pub enum StrategyAction {
+    PlaceOrder(Order),
+    CancelOrder { order_id: OrderId },
+    Log { level: LogLevel, message: String },
+    SetParameter { key: String, value: serde_json::Value },
+}
+```
+
+### Placing orders
+
+<CodeGroup>
+
+```rust Market order
+let order = Order::market_order(
+    symbol.clone(),
+    Side::Buy,
+    quantity,
+    strategy_id.clone()
+);
+actions.push(StrategyAction::PlaceOrder(order));
+```
+
+```rust Limit order
+let order = Order::limit_order(
+    symbol.clone(),
+    Side::Sell,
+    quantity,
+    limit_price,
+    strategy_id.clone()
+);
+actions.push(StrategyAction::PlaceOrder(order));
+```
+
+```rust Stop order
+let order = Order::stop_order(
+    symbol.clone(),
+    Side::Sell,
+    quantity,
+    stop_price,
+    strategy_id.clone()
+);
+actions.push(StrategyAction::PlaceOrder(order));
+```
+
+</CodeGroup>
+
+## Market data buffer
+
+Access historical market data using the `MarketDataBuffer`:
+
+```rust
+if let Some(buffer) = context.get_market_data(&symbol) {
+    // Get the latest bar
+    let latest_bar = buffer.get_latest_bar();
+    
+    // Get the last N bars
+    let bars = buffer.get_bars(20);
+    
+    // Get current price
+    let price = buffer.get_current_price();
+}
+```
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Use Decimal for all calculations">
+    GlowBack uses `rust_decimal::Decimal` for financial calculations to avoid floating-point precision errors. Always use `Decimal::from()` or `Decimal::from_f64_retain()` when converting from f64.
+  </Accordion>
+
+  <Accordion title="Check initialization state">
+    Always check `self.initialized` at the start of event handlers to ensure the strategy is properly configured before processing events.
+  </Accordion>
+
+  <Accordion title="Handle missing data gracefully">
+    Market data may not be available for all symbols at all times. Always check for `None` when accessing market data and handle missing data appropriately.
+  </Accordion>
+
+  <Accordion title="Avoid look-ahead bias">
+    Only use data that would have been available at the time of the decision. The `StrategyContext` provides data up to `current_time`.
+  </Accordion>
+
+  <Accordion title="Test with multiple symbols and timeframes">
+    Test your strategy across different symbols, time periods, and market conditions to ensure robustness.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Data sources" icon="database" href="/guides/data-sources">
+    Learn how to configure data providers
+  </Card>
+  <Card title="Backtesting" icon="chart-line" href="/guides/backtesting">
+    Run backtests to evaluate your strategy
+  </Card>
+  <Card title="Performance analytics" icon="chart-bar" href="/guides/performance-analytics">
+    Analyze strategy performance metrics
+  </Card>
+  <Card title="Python usage" icon="python" href="/guides/python-usage">
+    Use GlowBack from Python
+  </Card>
+</CardGroup>

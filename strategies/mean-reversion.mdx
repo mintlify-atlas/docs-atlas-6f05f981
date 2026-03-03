@@ -1,0 +1,363 @@
+---
+title: Mean reversion strategy
+description: Statistical arbitrage based on price deviations from the mean
+---
+
+The Mean Reversion strategy trades on the assumption that prices tend to revert to their historical average. It uses z-score analysis to identify statistically significant deviations and takes positions expecting mean reversion.
+
+## Strategy logic
+
+The strategy uses statistical measures to identify trading opportunities:
+
+1. Calculate rolling mean and standard deviation over lookback period
+2. Compute z-score: `(current_price - mean) / std_dev`
+3. **Buy signal** - Z-score < -entry_threshold (price significantly below mean)
+4. **Sell signal** - Z-score > entry_threshold (price significantly above mean)
+5. **Exit long** - Z-score rises back above -exit_threshold
+6. **Exit short** - Z-score falls back below exit_threshold
+7. Scale into positions incrementally up to max position size
+
+## Implementation
+
+Source: `crates/gb-types/src/strategy.rs:699-912`
+
+```rust
+pub struct MeanReversionStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    lookback_period: usize,
+    entry_threshold: Decimal,  // Standard deviations
+    exit_threshold: Decimal,
+    position_size: Decimal,
+    max_position_size: Decimal,
+}
+```
+
+### Z-score calculation
+
+From `strategy.rs:747-773`:
+
+```rust
+fn calculate_z_score(&self, prices: &[Decimal]) -> Option<Decimal> {
+    if prices.len() < self.lookback_period {
+        return None;
+    }
+    
+    let recent_prices: Vec<Decimal> = prices.iter()
+        .rev()
+        .take(self.lookback_period)
+        .cloned()
+        .collect();
+    let current_price = *prices.last()?;
+    
+    // Calculate mean
+    let mean: Decimal = recent_prices.iter().sum::<Decimal>() 
+        / Decimal::from(recent_prices.len());
+    
+    // Calculate standard deviation
+    let variance: Decimal = recent_prices.iter()
+        .map(|price| (*price - mean) * (*price - mean))
+        .sum::<Decimal>() / Decimal::from(recent_prices.len());
+    
+    let std_dev = variance.to_f64()
+        .map(|v| v.sqrt())
+        .and_then(Decimal::from_f64)
+        .unwrap_or(Decimal::ZERO);
+    
+    if std_dev != Decimal::ZERO {
+        Some((current_price - mean) / std_dev)
+    } else {
+        None
+    }
+}
+```
+
+### Entry logic
+
+From `strategy.rs:808-848`:
+
+```rust
+if z_score < -self.entry_threshold {
+    // Price is significantly below mean - buy opportunity
+    let available_cash = context.get_available_cash();
+    if let Some(price) = context.get_current_price(symbol) {
+        let max_quantity = (context.get_portfolio_value() * self.max_position_size) / price;
+        let position_increment = (context.get_portfolio_value() * self.position_size) / price;
+        
+        if current_quantity < max_quantity {
+            let quantity = (max_quantity - current_quantity).min(position_increment);
+            if quantity > Decimal::new(1, 4) && available_cash > quantity * price {
+                let order = Order::market_order(
+                    symbol.clone(),
+                    Side::Buy,
+                    quantity,
+                    self.config.strategy_id.clone()
+                );
+                actions.push(StrategyAction::PlaceOrder(order));
+            }
+        }
+    }
+} else if z_score > self.entry_threshold {
+    // Price is significantly above mean - sell opportunity
+    // Similar logic for short positions
+}
+```
+
+### Exit logic
+
+From `strategy.rs:851-884`:
+
+```rust
+if current_quantity > Decimal::ZERO && z_score > -self.exit_threshold {
+    // Long position, price moving back up toward mean
+    let exit_quantity = current_quantity.min(
+        (context.get_portfolio_value() * self.position_size) / 
+        context.get_current_price(symbol).unwrap_or(Decimal::ONE)
+    );
+    
+    if exit_quantity > Decimal::new(1, 4) {
+        let order = Order::market_order(
+            symbol.clone(),
+            Side::Sell,
+            exit_quantity,
+            self.config.strategy_id.clone()
+        );
+        actions.push(StrategyAction::PlaceOrder(order));
+    }
+}
+```
+
+## Parameters
+
+<ParamField path="lookback_period" type="usize" default="20" required>
+  Number of bars for calculating mean and standard deviation
+</ParamField>
+
+<ParamField path="entry_threshold" type="f64" default="2.0" required>
+  Z-score threshold for entry signals (standard deviations from mean)
+</ParamField>
+
+<ParamField path="exit_threshold" type="f64" default="1.0" required>
+  Z-score threshold for exit signals (standard deviations from mean)
+</ParamField>
+
+<ParamField path="position_size" type="f64" default="0.25">
+  Percentage of portfolio per trade increment (0.0 to 1.0)
+</ParamField>
+
+<ParamField path="max_position_size" type="f64" default="0.95">
+  Maximum total position size as percentage of portfolio (0.0 to 1.0)
+</ParamField>
+
+<ParamField path="symbols" type="Vec<Symbol>" required>
+  Symbols to trade with this strategy
+</ParamField>
+
+## Usage
+
+### Basic setup
+
+```rust
+use gb_types::strategy::{MeanReversionStrategy, StrategyConfig, Strategy};
+use gb_types::market::Symbol;
+
+// Create strategy: 15-day lookback, 2.0σ entry, 1.0σ exit
+let mut strategy = MeanReversionStrategy::new(15, 2.0, 1.0);
+
+// Configure
+let mut config = StrategyConfig::new(
+    "mean_reversion".to_string(),
+    "Mean Reversion 15/2.0/1.0".to_string()
+);
+config.add_symbol(Symbol::equity("AAPL"));
+config.set_parameter("position_size", 0.25f64);      // 25% increments
+config.set_parameter("max_position_size", 0.75f64);  // Max 75% total
+
+// Initialize
+strategy.initialize(&config)?;
+```
+
+### From example code
+
+From `crates/gb-types/examples/basic_usage.rs:157-168`:
+
+```rust
+let mut mean_rev_strategy = MeanReversionStrategy::new(15, 2.0, 1.0);
+let mut mean_rev_config = StrategyConfig::new(
+    "mean_reversion".to_string(),
+    "Mean Reversion".to_string()
+);
+mean_rev_config.add_symbol(symbol.clone());
+mean_rev_config.set_parameter("position_size", 0.25f64);
+mean_rev_config.set_parameter("max_position_size", 0.75f64);
+
+if let Ok(()) = mean_rev_strategy.initialize(&mean_rev_config) {
+    println!("  • Initialized: 15-day mean reversion with 2.0σ entry threshold");
+    println!("  • Position size: 25% increments, max 75%");
+}
+```
+
+## Testing
+
+From `strategy.rs:1178-1209`:
+
+```rust
+#[test]
+fn test_mean_reversion_strategy() {
+    let mut strategy = MeanReversionStrategy::new(10, 2.0, 1.0);
+    let mut config = StrategyConfig::new(
+        "test_mean_rev".to_string(),
+        "Test Mean Reversion".to_string()
+    );
+    config.add_symbol(create_test_symbol());
+    
+    assert!(strategy.initialize(&config).is_ok());
+    
+    // Create test data with mean-reverting pattern
+    let mut bars = Vec::new();
+    let base_time = Utc::now();
+    let base_price = dec!(100);
+    
+    // Stable prices around 100
+    for i in 0..10 {
+        let price = base_price + Decimal::from(i % 3 - 1); // 99, 100, 101 pattern
+        let bar = create_test_bar(price, base_time + chrono::Duration::days(i));
+        bars.push(bar);
+    }
+    
+    let context = create_test_context_with_data(bars);
+    
+    // Test with price significantly below mean (should trigger buy)
+    let low_bar = create_test_bar(dec!(90), base_time + chrono::Duration::days(11));
+    let event = MarketEvent::Bar(low_bar);
+    
+    let actions = strategy.on_market_event(&event, &context);
+    assert!(actions.is_ok());
+    // Should generate buy signal
+}
+```
+
+### Z-score calculation test
+
+From `strategy.rs:1258-1269`:
+
+```rust
+#[test]
+fn test_z_score_calculation() {
+    let strategy = MeanReversionStrategy::new(4, 2.0, 1.0);
+    let prices = vec![dec!(98), dec!(100), dec!(102), dec!(100), dec!(110)];
+    
+    let z_score = strategy.calculate_z_score(&prices);
+    assert!(z_score.is_some());
+    
+    let result = z_score.unwrap();
+    // With mean around 100 and std dev around 4.47, z-score should be positive
+    assert!(result > dec!(1)); // 110 is above the mean
+}
+```
+
+## Common configurations
+
+### Aggressive mean reversion
+
+```rust
+let strategy = MeanReversionStrategy::new(10, 1.5, 0.5);
+config.set_parameter("position_size", 0.33f64); // Larger increments
+// Trades more frequently on smaller deviations
+```
+
+### Conservative mean reversion
+
+```rust
+let strategy = MeanReversionStrategy::new(30, 2.5, 1.5);
+config.set_parameter("position_size", 0.20f64); // Smaller increments
+config.set_parameter("max_position_size", 0.60f64); // Lower max exposure
+// Only trades extreme deviations, scales in gradually
+```
+
+### High-frequency mean reversion
+
+```rust
+let strategy = MeanReversionStrategy::new(5, 2.0, 0.5);
+config.set_parameter("position_size", 0.25f64);
+// Fast-moving window, quick exits
+```
+
+## Behavior details
+
+### Incremental position building
+
+The strategy scales into positions rather than going all-in:
+
+- Each trade adds `position_size` percentage of portfolio value
+- Maximum total position capped at `max_position_size`
+- Allows pyramiding as price moves further from mean
+- Reduces risk of catching a falling knife
+
+### Asymmetric entry/exit
+
+- Entry threshold (e.g., 2.0σ) is wider than exit threshold (e.g., 1.0σ)
+- Ensures trades only taken on significant deviations
+- Exits taken as price moves partway back to mean
+- Locks in profits before full mean reversion
+
+## Use cases
+
+- **Pairs trading** - Trade spread between correlated assets
+- **Statistical arbitrage** - Exploit temporary mispricings
+- **Range-bound markets** - Profit from oscillating prices
+- **Volatility trading** - Trade around stable price levels
+
+## Limitations
+
+<Warning>
+  Mean reversion strategies assume prices will return to historical averages. This assumption fails during regime changes or structural shifts.
+</Warning>
+
+- **Regime changes** - New price levels invalidate historical mean
+- **Trending markets** - Continuous losses fading strong trends
+- **Minimum trade size** - 0.0001 threshold may miss small adjustments
+- **Requires stationarity** - Works best on mean-reverting assets
+- **Capital intensive** - Scaling into positions requires available capital
+
+## Performance characteristics
+
+- **Best in** - Range-bound, mean-reverting markets
+- **Worst in** - Strongly trending markets or during regime shifts
+- **Win rate** - Typically high (60-70%) but with occasional large losses
+- **Profit factor** - Many small wins offset by infrequent large losses
+- **Drawdowns** - Can be severe during persistent trends
+
+## Advanced usage
+
+### Dynamic lookback periods
+
+Adjust lookback based on market volatility:
+
+```rust
+let volatility = calculate_volatility(&prices);
+let adaptive_lookback = base_lookback * volatility_factor;
+config.set_parameter("lookback_period", adaptive_lookback);
+```
+
+### Multi-leg mean reversion
+
+Combine with correlation analysis for pairs trading:
+
+```rust
+config.add_symbol(Symbol::equity("AAPL"));
+config.add_symbol(Symbol::equity("MSFT"));
+// Calculate spread and apply mean reversion to spread
+```
+
+## Related strategies
+
+<CardGroup cols={2}>
+  <Card title="Momentum" icon="rocket" href="/strategies/momentum">
+    Opposite philosophy - follows trends instead of fading them
+  </Card>
+  
+  <Card title="RSI" icon="chart-area" href="/strategies/rsi">
+    Similar concept using RSI oscillator instead of z-scores
+  </Card>
+</CardGroup>

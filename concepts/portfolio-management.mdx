@@ -1,0 +1,596 @@
+---
+title: Portfolio management
+description: Position tracking, P&L calculation, and portfolio state management
+---
+
+GlowBack provides comprehensive **portfolio management** with position tracking, real-time P&L calculation, and risk metrics.
+
+## Portfolio structure
+
+From `gb-types/src/portfolio.rs`, the Portfolio manages cash and positions:
+
+```rust
+pub struct Portfolio {
+    pub account_id: String,
+    pub cash: Decimal,
+    pub initial_capital: Decimal,
+    pub positions: HashMap<Symbol, Position>,
+    pub total_equity: Decimal,
+    pub total_pnl: Decimal,
+    pub daily_returns: Vec<DailyReturn>,
+    pub last_updated: DateTime<Utc>,
+}
+```
+
+### Key components
+
+| Field | Purpose | Updated |
+|-------|---------|----------|
+| `cash` | Available buying power | On fills |
+| `positions` | Open positions by symbol | On fills |
+| `total_equity` | Cash + position values | On market data |
+| `total_pnl` | Cumulative profit/loss | On fills |
+| `daily_returns` | Daily return history | End of day |
+
+## Position tracking
+
+### Position structure
+
+From `gb-types/src/portfolio.rs:10-33`:
+
+```rust
+pub struct Position {
+    pub symbol: Symbol,
+    pub quantity: Decimal,           // Signed: +long, -short
+    pub average_price: Decimal,      // Cost basis
+    pub market_value: Decimal,       // Current market value
+    pub unrealized_pnl: Decimal,     // Open P&L
+    pub realized_pnl: Decimal,       // Closed P&L
+    pub last_updated: DateTime<Utc>,
+}
+```
+
+### Position states
+
+```rust
+impl Position {
+    pub fn is_long(&self) -> bool {
+        self.quantity > Decimal::ZERO
+    }
+    
+    pub fn is_short(&self) -> bool {
+        self.quantity < Decimal::ZERO
+    }
+    
+    pub fn is_flat(&self) -> bool {
+        self.quantity == Decimal::ZERO
+    }
+}
+```
+
+## Order fills and position updates
+
+### Applying fills
+
+From `gb-types/src/portfolio.rs:47-93`, fills update positions atomically:
+
+```rust
+pub fn apply_fill(&mut self, fill: &Fill) {
+    let fill_quantity = match fill.side {
+        Side::Buy => fill.quantity,
+        Side::Sell => -fill.quantity,
+    };
+    
+    let new_quantity = self.quantity + fill_quantity;
+    
+    // Opening new position
+    if self.quantity == Decimal::ZERO {
+        self.quantity = new_quantity;
+        self.average_price = fill.price;
+    }
+    // Adding to existing position
+    else if (self.quantity > Decimal::ZERO && fill_quantity > Decimal::ZERO) || 
+            (self.quantity < Decimal::ZERO && fill_quantity < Decimal::ZERO) {
+        let total_cost = self.quantity.abs() * self.average_price + 
+                        fill_quantity.abs() * fill.price;
+        let total_quantity = self.quantity.abs() + fill_quantity.abs();
+        self.average_price = total_cost / total_quantity;
+        self.quantity = new_quantity;
+    }
+    // Reducing or closing position
+    else {
+        let closed_quantity = fill_quantity.abs().min(self.quantity.abs());
+        let remaining_quantity = self.quantity.abs() - closed_quantity;
+        
+        // Calculate realized P&L
+        let realized_pnl = match self.quantity > Decimal::ZERO {
+            true => (fill.price - self.average_price) * closed_quantity,
+            false => (self.average_price - fill.price) * closed_quantity,
+        };
+        self.realized_pnl += realized_pnl;
+        
+        if remaining_quantity == Decimal::ZERO {
+            // Position closed
+            self.quantity = Decimal::ZERO;
+            self.average_price = Decimal::ZERO;
+        } else {
+            // Position reduced
+            self.quantity = match self.quantity > Decimal::ZERO {
+                true => remaining_quantity,
+                false => -remaining_quantity,
+            };
+        }
+    }
+    
+    self.last_updated = fill.executed_at;
+}
+```
+
+### Example: Position lifecycle
+
+```python
+from glowback import Portfolio, Fill, Order, Side
+from decimal import Decimal
+
+portfolio = Portfolio.new("demo", Decimal(100000))
+
+# 1. Buy 100 shares at $150
+fill1 = Fill(
+    order_id=order.id,
+    symbol="AAPL",
+    side=Side.Buy,
+    quantity=Decimal(100),
+    price=Decimal(150),
+)
+portfolio.apply_fill(fill1)
+
+position = portfolio.positions["AAPL"]
+assert position.quantity == Decimal(100)
+assert position.average_price == Decimal(150)
+assert position.realized_pnl == Decimal(0)
+
+# 2. Buy 50 more shares at $160 (averaging up)
+fill2 = Fill(
+    order_id=order2.id,
+    symbol="AAPL",
+    side=Side.Buy,
+    quantity=Decimal(50),
+    price=Decimal(160),
+)
+portfolio.apply_fill(fill2)
+
+assert position.quantity == Decimal(150)
+assert position.average_price == Decimal("153.33")  # (100*150 + 50*160) / 150
+
+# 3. Sell 75 shares at $170 (partial close)
+fill3 = Fill(
+    order_id=order3.id,
+    symbol="AAPL",
+    side=Side.Sell,
+    quantity=Decimal(75),
+    price=Decimal(170),
+)
+portfolio.apply_fill(fill3)
+
+assert position.quantity == Decimal(75)
+assert position.realized_pnl == Decimal("1250")  # (170 - 153.33) * 75
+
+# 4. Sell remaining 75 shares at $165 (full close)
+fill4 = Fill(
+    order_id=order4.id,
+    symbol="AAPL",
+    side=Side.Sell,
+    quantity=Decimal(75),
+    price=Decimal(165),
+)
+portfolio.apply_fill(fill4)
+
+assert position.quantity == Decimal(0)
+assert position.is_flat()
+```
+
+## Market value updates
+
+### Real-time pricing
+
+From `gb-types/src/portfolio.rs:95-105`:
+
+```rust
+pub fn update_market_price(&mut self, market_price: Decimal) {
+    self.market_value = self.quantity.abs() * market_price;
+    self.unrealized_pnl = match self.quantity {
+        q if q > Decimal::ZERO => (market_price - self.average_price) * self.quantity,
+        q if q < Decimal::ZERO => (self.average_price - market_price) * self.quantity.abs(),
+        _ => Decimal::ZERO,
+    };
+    self.last_updated = Utc::now();
+}
+```
+
+### Portfolio-level updates
+
+The engine updates all positions with current market prices:
+
+```rust
+// From gb-engine/src/engine.rs:276-294
+async fn update_portfolio_values(&mut self) -> GbResult<()> {
+    let mut current_prices = HashMap::new();
+    
+    // Collect current prices from market data
+    for (symbol, bars) in &self.market_data {
+        for bar in bars {
+            if bar.timestamp.date_naive() == self.current_time.date_naive() {
+                current_prices.insert(symbol.clone(), bar.close);
+                break;
+            }
+        }
+    }
+    
+    // Update portfolio with current prices
+    self.portfolio.update_market_prices(&current_prices);
+    
+    Ok(())
+}
+```
+
+## P&L calculation
+
+### Realized vs. Unrealized P&L
+
+**Realized P&L** is locked in when a position is closed:
+
+```rust
+// Long position
+realized_pnl = (sell_price - average_cost) * quantity_closed
+
+// Short position  
+realized_pnl = (average_cost - buy_to_cover_price) * quantity_closed
+```
+
+**Unrealized P&L** reflects current mark-to-market:
+
+```rust
+// Long position
+unrealized_pnl = (current_price - average_cost) * quantity
+
+// Short position
+unrealized_pnl = (average_cost - current_price) * quantity_abs
+```
+
+### Total portfolio P&L
+
+```rust
+impl Portfolio {
+    pub fn get_total_pnl(&self) -> Decimal {
+        let realized: Decimal = self.positions.values()
+            .map(|p| p.realized_pnl)
+            .sum();
+        
+        let unrealized: Decimal = self.positions.values()
+            .map(|p| p.unrealized_pnl)
+            .sum();
+        
+        realized + unrealized
+    }
+    
+    pub fn get_total_return(&self) -> Decimal {
+        if self.initial_capital > Decimal::ZERO {
+            (self.total_equity - self.initial_capital) / self.initial_capital
+        } else {
+            Decimal::ZERO
+        }
+    }
+}
+```
+
+## Daily returns tracking
+
+### DailyReturn structure
+
+```rust
+pub struct DailyReturn {
+    pub date: DateTime<Utc>,
+    pub portfolio_value: Decimal,
+    pub daily_return: Decimal,
+    pub cash: Decimal,
+    pub positions_value: Decimal,
+}
+```
+
+### Recording daily returns
+
+From `gb-engine/src/engine.rs:397-438`:
+
+```rust
+async fn update_daily_returns(&mut self) -> GbResult<()> {
+    let total_value = self.portfolio.total_equity;
+    
+    // Calculate daily return from previous value
+    let (daily_return, daily_return_opt) = if let Some(previous) = self.portfolio.daily_returns.last() {
+        if previous.portfolio_value > Decimal::ZERO {
+            let dr = (total_value - previous.portfolio_value) / previous.portfolio_value;
+            (dr, Some(dr))
+        } else {
+            (Decimal::ZERO, Some(Decimal::ZERO))
+        }
+    } else {
+        (Decimal::ZERO, None)
+    };
+
+    self.portfolio.add_daily_return(self.current_time, daily_return);
+
+    let positions_value: Decimal = self.portfolio.positions.values()
+        .map(|position| position.market_value)
+        .sum();
+
+    // Track drawdown
+    if total_value > self.equity_peak {
+        self.equity_peak = total_value;
+    }
+    let drawdown = if self.equity_peak > Decimal::ZERO {
+        (self.equity_peak - total_value) / self.equity_peak
+    } else {
+        Decimal::ZERO
+    };
+
+    let point = EquityCurvePoint {
+        timestamp: self.current_time,
+        portfolio_value: total_value,
+        cash: self.portfolio.cash,
+        positions_value,
+        total_pnl: self.portfolio.total_pnl,
+        daily_return: daily_return_opt,
+        cumulative_return: self.portfolio.get_total_return(),
+        drawdown,
+    };
+
+    self.equity_curve.push(point);
+
+    Ok(())
+}
+```
+
+## Risk metrics
+
+### Performance calculations
+
+From `gb-engine/src/engine.rs:442-526`, the engine computes:
+
+**Volatility** (annualized):
+
+```rust
+let daily_returns: Vec<f64> = self.portfolio.daily_returns
+    .iter()
+    .map(|dr| dr.daily_return.to_f64().unwrap_or(0.0))
+    .collect();
+
+if daily_returns.len() > 1 {
+    let mean = daily_returns.iter().sum::<f64>() / daily_returns.len() as f64;
+    let variance = daily_returns.iter()
+        .map(|r| (r - mean).powi(2))
+        .sum::<f64>() / (daily_returns.len() - 1) as f64;
+    let daily_vol = variance.sqrt();
+    let annualized_vol = daily_vol * (252.0_f64).sqrt();  // 252 trading days
+}
+```
+
+**Sharpe ratio** (assuming risk-free rate = 0):
+
+```rust
+if annualized_vol > 0.0 {
+    let sharpe = annualized_return / annualized_vol;
+}
+```
+
+**Maximum drawdown**:
+
+```rust
+let mut peak = self.config.initial_capital;
+let mut max_dd = Decimal::ZERO;
+
+for dr in &self.portfolio.daily_returns {
+    if dr.portfolio_value > peak {
+        peak = dr.portfolio_value;
+    }
+    if peak > Decimal::ZERO {
+        let drawdown = (peak - dr.portfolio_value) / peak;
+        if drawdown > max_dd {
+            max_dd = drawdown;
+        }
+    }
+}
+```
+
+## Equity curve
+
+### EquityCurvePoint structure
+
+```rust
+pub struct EquityCurvePoint {
+    pub timestamp: DateTime<Utc>,
+    pub portfolio_value: Decimal,
+    pub cash: Decimal,
+    pub positions_value: Decimal,
+    pub total_pnl: Decimal,
+    pub daily_return: Option<Decimal>,
+    pub cumulative_return: Decimal,
+    pub drawdown: Decimal,
+}
+```
+
+### Visualization example
+
+```python
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Run backtest
+result = engine.run()
+
+# Convert equity curve to DataFrame
+df = pd.DataFrame([
+    {
+        'timestamp': point.timestamp,
+        'portfolio_value': float(point.portfolio_value),
+        'cash': float(point.cash),
+        'positions_value': float(point.positions_value),
+        'cumulative_return': float(point.cumulative_return),
+        'drawdown': float(point.drawdown),
+    }
+    for point in result.equity_curve
+])
+
+# Plot equity curve
+fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+
+axes[0].plot(df['timestamp'], df['portfolio_value'])
+axes[0].set_title('Portfolio Value Over Time')
+axes[0].set_ylabel('Value ($)')
+
+axes[1].fill_between(df['timestamp'], 0, -df['drawdown'], alpha=0.3, color='red')
+axes[1].set_title('Drawdown')
+axes[1].set_ylabel('Drawdown (%)')
+axes[1].set_xlabel('Date')
+
+plt.tight_layout()
+plt.show()
+```
+
+## Multi-asset portfolios
+
+GlowBack supports portfolios with multiple asset classes:
+
+```python
+from glowback import Portfolio, Symbol
+
+portfolio = Portfolio.new("multi_asset", Decimal(500000))
+
+# Equities
+portfolio.apply_fill(Fill(
+    symbol=Symbol.equity("AAPL"),
+    side=Side.Buy,
+    quantity=Decimal(100),
+    price=Decimal(150),
+))
+
+# Crypto (fractional quantities supported)
+portfolio.apply_fill(Fill(
+    symbol=Symbol.crypto("BTC-USD"),
+    side=Side.Buy,
+    quantity=Decimal("0.5"),
+    price=Decimal(40000),
+))
+
+# Forex
+portfolio.apply_fill(Fill(
+    symbol=Symbol.forex("EUR/USD"),
+    side=Side.Buy,
+    quantity=Decimal(10000),
+    price=Decimal("1.0850"),
+))
+```
+
+<Info>
+Cryptocurrency positions support **fractional quantities** (e.g., 0.5 BTC), while equities default to integer shares unless configured otherwise.
+</Info>
+
+## Cash management
+
+### Available buying power
+
+```rust
+impl Portfolio {
+    pub fn get_buying_power(&self) -> Decimal {
+        // Simple: cash available
+        // Advanced: include margin calculations
+        self.cash
+    }
+    
+    pub fn can_afford(&self, order_value: Decimal) -> bool {
+        self.get_buying_power() >= order_value
+    }
+}
+```
+
+### Cash updates on fills
+
+```rust
+// Buy order reduces cash
+if fill.side == Side::Buy {
+    self.cash -= fill.quantity * fill.price + fill.commission;
+}
+
+// Sell order increases cash
+if fill.side == Side.Sell {
+    self.cash += fill.quantity * fill.price - fill.commission;
+}
+```
+
+## Strategy context integration
+
+Strategies access portfolio state via `StrategyContext`:
+
+```python
+from glowback import Strategy, StrategyContext
+
+class RiskManagedStrategy(Strategy):
+    def on_market_event(self, event, context: StrategyContext):
+        # Check current exposure
+        total_exposure = sum(
+            abs(pos.market_value) 
+            for pos in context.portfolio.positions.values()
+        )
+        
+        max_exposure = context.initial_capital * Decimal("0.95")  # 95% max
+        
+        if total_exposure >= max_exposure:
+            return []  # Don't open new positions
+        
+        # Check position limits
+        if event.symbol in context.portfolio.positions:
+            position = context.portfolio.positions[event.symbol]
+            if abs(position.quantity) >= 500:
+                return []  # Max 500 shares per position
+        
+        # Generate signal...
+```
+
+## Portfolio persistence
+
+### Serialization
+
+Portfolios can be serialized for storage:
+
+```rust
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct Portfolio {
+    // ... fields
+}
+
+// Save to JSON
+let json = serde_json::to_string(&portfolio)?;
+std::fs::write("portfolio.json", json)?;
+
+// Load from JSON
+let json = std::fs::read_to_string("portfolio.json")?;
+let portfolio: Portfolio = serde_json::from_str(&json)?;
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Event-driven simulation" icon="clock" href="/concepts/event-driven-simulation">
+    Learn how orders are executed in the engine
+  </Card>
+  <Card title="Market data" icon="database" href="/concepts/market-data">
+    Understand data loading and caching
+  </Card>
+  <Card title="Risk management" icon="shield" href="/guides/performance-analytics">
+    Implement position limits and stop losses
+  </Card>
+  <Card title="Performance metrics" icon="chart-line" href="/guides/performance-analytics">
+    Analyze backtest results
+  </Card>
+</CardGroup>

@@ -1,0 +1,291 @@
+---
+title: DataManager class
+description: Load and manage market data from multiple sources
+---
+
+## Overview
+
+The `DataManager` class handles loading market data from various providers including sample data, CSV files, and external APIs like Alpha Vantage. It provides a unified interface for data access with built-in caching and catalog management.
+
+## Constructor
+
+```python
+from glowback import DataManager
+
+dm = DataManager()
+```
+
+Creates a new DataManager instance with an asynchronous runtime for data operations.
+
+<ParamField body="returns" type="DataManager">
+  A new DataManager instance
+</ParamField>
+
+<Note>
+The DataManager creates its own async runtime internally. You don't need to worry about async/await in your Python code.
+</Note>
+
+## Methods
+
+### load_data
+
+Load market data for a specific symbol and date range.
+
+```python
+from glowback import DataManager, Symbol
+
+dm = DataManager()
+dm.add_sample_provider()  # Add data source first
+
+symbol = Symbol("AAPL", "NASDAQ", "equity")
+bars = dm.load_data(
+    symbol=symbol,
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day"
+)
+
+print(f"Loaded {len(bars)} bars")
+for bar in bars[:5]:  # First 5 bars
+    print(f"{bar.timestamp}: O={bar.open} H={bar.high} L={bar.low} C={bar.close}")
+```
+
+<ParamField path="symbol" type="Symbol" required>
+  The symbol to load data for
+</ParamField>
+
+<ParamField path="start_date" type="str" required>
+  Start date in RFC3339 format (e.g., "2020-01-01T00:00:00Z")
+</ParamField>
+
+<ParamField path="end_date" type="str" required>
+  End date in RFC3339 format (e.g., "2023-12-31T23:59:59Z")
+</ParamField>
+
+<ParamField path="resolution" type="str" required>
+  Time resolution: "minute"/"1m", "hour"/"1h", or "day"/"1d"
+</ParamField>
+
+<ParamField body="returns" type="list[Bar]">
+  List of Bar objects containing OHLCV data
+</ParamField>
+
+### add_sample_provider
+
+Add a sample data provider for testing and development.
+
+```python
+dm = DataManager()
+dm.add_sample_provider()
+
+# Now you can load sample data
+symbol = Symbol("AAPL", "NASDAQ", "equity")
+bars = dm.load_data(
+    symbol=symbol,
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day"
+)
+```
+
+<Note>
+The sample provider generates synthetic data useful for testing strategies without needing real market data.
+</Note>
+
+### add_csv_provider
+
+Add a CSV data provider to load data from local files.
+
+```python
+dm = DataManager()
+dm.add_csv_provider(base_path="./data")
+
+# CSV files should be named: {symbol}_{exchange}_{resolution}.csv
+# Example: AAPL_NASDAQ_day.csv
+symbol = Symbol("AAPL", "NASDAQ", "equity")
+bars = dm.load_data(
+    symbol=symbol,
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day"
+)
+```
+
+<ParamField path="base_path" type="str" required>
+  Base directory path containing CSV files
+</ParamField>
+
+#### CSV file format
+
+CSV files should have the following columns:
+
+```csv
+timestamp,open,high,low,close,volume
+2020-01-02T00:00:00Z,100.25,102.50,99.75,101.00,1000000
+2020-01-03T00:00:00Z,101.00,103.25,100.50,102.75,1200000
+```
+
+### add_alpha_vantage_provider
+
+Add an Alpha Vantage API provider for fetching real market data.
+
+```python
+dm = DataManager()
+dm.add_alpha_vantage_provider(api_key="YOUR_API_KEY")
+
+symbol = Symbol("AAPL", "NASDAQ", "equity")
+bars = dm.load_data(
+    symbol=symbol,
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day"
+)
+```
+
+<ParamField path="api_key" type="str" required>
+  Your Alpha Vantage API key. Get one free at [alphavantage.co](https://www.alphavantage.co)
+</ParamField>
+
+<Warning>
+Alpha Vantage free tier has rate limits:
+- 5 API calls per minute
+- 500 API calls per day
+
+Consider caching data locally or using a premium API key for production use.
+</Warning>
+
+### get_catalog_stats
+
+Get statistics about the data catalog.
+
+```python
+dm = DataManager()
+dm.add_sample_provider()
+
+# Load some data first
+symbol = Symbol("AAPL", "NASDAQ", "equity")
+dm.load_data(
+    symbol=symbol,
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day"
+)
+
+# Get catalog stats
+stats = dm.get_catalog_stats()
+print(f"Total symbols: {stats.total_symbols}")
+print(f"Total records: {stats.total_records}")
+print(f"Date range: {stats.date_range_start} to {stats.date_range_end}")
+```
+
+<ParamField body="returns" type="CatalogStats">
+  Statistics object with the following attributes:
+  - `total_symbols` (int): Number of unique symbols in catalog
+  - `total_records` (int): Total number of data records
+  - `date_range_start` (str): Earliest date in catalog (RFC3339 format)
+  - `date_range_end` (str): Latest date in catalog (RFC3339 format)
+</ParamField>
+
+### get_provider_count
+
+Get the number of configured data providers.
+
+```python
+dm = DataManager()
+print(f"Providers: {dm.get_provider_count()}")  # 0
+
+dm.add_sample_provider()
+print(f"Providers: {dm.get_provider_count()}")  # 1
+
+dm.add_csv_provider("./data")
+print(f"Providers: {dm.get_provider_count()}")  # 2
+```
+
+<ParamField body="returns" type="int">
+  Number of configured data providers
+</ParamField>
+
+## Complete example
+
+Here's a complete example using multiple data providers:
+
+```python
+from glowback import DataManager, Symbol
+
+# Initialize DataManager
+dm = DataManager()
+
+# Add multiple data providers
+dm.add_sample_provider()  # For testing
+dm.add_csv_provider("./historical_data")  # Local CSV files
+dm.add_alpha_vantage_provider("YOUR_API_KEY")  # External API
+
+print(f"Configured {dm.get_provider_count()} data providers")
+
+# Load data for multiple symbols
+symbols = [
+    Symbol("AAPL", "NASDAQ", "equity"),
+    Symbol("MSFT", "NASDAQ", "equity"),
+    Symbol("GOOGL", "NASDAQ", "equity"),
+]
+
+for symbol in symbols:
+    try:
+        bars = dm.load_data(
+            symbol=symbol,
+            start_date="2020-01-01T00:00:00Z",
+            end_date="2023-12-31T23:59:59Z",
+            resolution="day"
+        )
+        print(f"Loaded {len(bars)} bars for {symbol.symbol}")
+        
+        # Display first and last bar
+        if bars:
+            first_bar = bars[0]
+            last_bar = bars[-1]
+            print(f"  First: {first_bar.timestamp} - Close: ${first_bar.close}")
+            print(f"  Last:  {last_bar.timestamp} - Close: ${last_bar.close}")
+            
+    except Exception as e:
+        print(f"Error loading {symbol.symbol}: {e}")
+
+# Display catalog statistics
+stats = dm.get_catalog_stats()
+print(f"\nCatalog Stats:")
+print(f"  Symbols: {stats.total_symbols}")
+print(f"  Records: {stats.total_records:,}")
+print(f"  Range: {stats.date_range_start} to {stats.date_range_end}")
+```
+
+## Data provider priority
+
+When multiple providers are configured, GlowBack queries them in the order they were added. The first provider that returns data wins.
+
+```python
+dm = DataManager()
+
+# Priority order:
+dm.add_csv_provider("./data")           # 1. Try local cache first
+dm.add_alpha_vantage_provider("KEY")    # 2. Then try API
+dm.add_sample_provider()                # 3. Fall back to sample data
+
+# This will try CSV first, then API, then sample data
+bars = dm.load_data(symbol, start_date, end_date, resolution)
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Symbol class" icon="tag" href="/api/python/overview#symbol">
+    Learn about the Symbol type
+  </Card>
+  <Card title="Bar class" icon="chart-candlestick" href="/api/python/overview#bar">
+    Understand OHLCV bar data
+  </Card>
+  <Card title="Data providers" icon="database" href="/guides/data-sources">
+    Learn more about data sources
+  </Card>
+  <Card title="BacktestEngine" icon="gauge" href="/api/python/backtest-engine">
+    Use loaded data in backtests
+  </Card>
+</CardGroup>

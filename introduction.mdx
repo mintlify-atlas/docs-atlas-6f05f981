@@ -1,0 +1,196 @@
+---
+title: Welcome to GlowBack
+description: High-performance quantitative backtesting platform built in Rust with Python bindings
+---
+
+## Build better trading strategies faster
+
+GlowBack is a high-performance quantitative backtesting platform that combines the speed of Rust with the ease of Python. Whether you're a quantitative researcher, algorithmic trader, or data scientist, GlowBack provides the tools you need to develop, test, and analyze trading strategies with confidence.
+
+<CardGroup cols={2}>
+  <Card title="Get started" icon="rocket" href="/quickstart">
+    Run your first backtest in under 5 minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install GlowBack for Rust or Python
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts/architecture">
+    Learn about event-driven simulation
+  </Card>
+  <Card title="API reference" icon="code" href="/api/python/overview">
+    Explore the Python and Rust APIs
+  </Card>
+  <Card title="API reference" icon="code" href="/api-reference">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>
+
+## Key features
+
+### Event-driven backtesting engine
+
+GlowBack simulates realistic market conditions with chronological event ordering across multiple symbols. The engine includes configurable slippage, latency, and commission models to ensure your backtest results reflect real-world trading conditions.
+
+### Multi-asset support
+
+Backtest strategies across multiple asset classes with asset-class-aware features:
+- **Equities**: Standard market hours, integer shares, tiered commission structures
+- **Crypto**: 24/7 trading, fractional quantities, maker/taker fees
+
+Each asset class has appropriate market hours, fee structures, and trading constraints built in.
+
+### High performance with ease of use
+
+GlowBack's Rust core delivers exceptional performance for processing millions of bars and events. Python bindings with async support provide a familiar, productive development experience without sacrificing speed.
+
+```python
+import glowback
+
+# Fast, simple API
+manager = glowback.PyDataManager()
+manager.add_sample_provider()
+bars = manager.load_data(symbol, start_date, end_date, "day")
+```
+
+### Built-in strategy library
+
+Start backtesting immediately with production-ready strategies:
+- **Buy & Hold**: Long-term passive investment baseline
+- **Moving Average Crossover**: Trend following with customizable periods
+- **Momentum**: Rides trends with configurable lookback and thresholds
+- **Mean Reversion**: Statistical arbitrage with z-score analysis
+- **RSI**: Relative strength index with overbought/oversold signals
+
+All strategies support custom parameters, position sizing, and risk management.
+
+### Efficient data storage
+
+Arrow/Parquet columnar storage provides fast batch loading and efficient disk usage. SQLite metadata catalog enables indexed queries across symbols, date ranges, and resolutions.
+
+```rust
+// Efficient batch loading
+let bars = data_manager.load_data(
+    &symbol, 
+    start_date, 
+    end_date, 
+    Resolution::Day
+).await?;
+```
+
+### Interactive development UI
+
+Streamlit-based interface for visual strategy development:
+- Load data from CSV, APIs, or sample datasets
+- Edit strategies with syntax highlighting
+- Run backtests with real-time progress
+- Analyze results with interactive charts
+
+<Note>
+The UI launches at `http://localhost:8501` with a single command: `cd ui && python setup.py`
+</Note>
+
+### Programmatic API access
+
+FastAPI gateway provides RESTful endpoints for:
+- Submitting backtests programmatically
+- Retrieving results and analytics
+- Running parameter optimizations
+- WebSocket support for real-time updates
+
+```bash
+# Launch the API
+docker compose up api
+
+# API available at http://localhost:8000
+curl -X POST http://localhost:8000/api/v1/backtest \
+  -H "X-API-Key: your-key" \
+  -d @backtest_config.json
+```
+
+### Comprehensive performance analytics
+
+GlowBack calculates essential performance metrics automatically:
+
+**Return metrics**:
+- Total return, CAGR (Compound Annual Growth Rate)
+- Period returns (daily, monthly, annual)
+
+**Risk-adjusted metrics**:
+- Sharpe ratio (risk-adjusted returns)
+- Sortino ratio (downside deviation penalty)
+- Calmar ratio (return vs max drawdown)
+
+**Risk metrics**:
+- Maximum drawdown and recovery time
+- Value at Risk (VaR) and Conditional VaR (CVaR)
+- Volatility, skewness, kurtosis
+
+**Trade statistics**:
+- Win rate, average win/loss
+- Profit factor, expectancy
+- Trade count and frequency
+
+## Architecture overview
+
+GlowBack is organized as a Rust workspace with Python bindings:
+
+```
+glowback/
+├── crates/
+│   ├── gb-types/      # Core types, orders, portfolio, strategies
+│   ├── gb-data/       # Data ingestion, providers, storage, catalog  
+│   ├── gb-engine/     # Event-driven backtesting engine
+│   ├── gb-python/     # PyO3 Python bindings
+│   ├── gb-risk/       # Risk analytics and metrics
+│   ├── gb-optimizer/  # Parameter optimization
+│   └── gb-options/    # Options pricing (planned)
+├── ui/                # Streamlit interface
+└── api/               # FastAPI gateway
+```
+
+<CardGroup cols={3}>
+  <Card title="gb-types" icon="cube">
+    Core data structures for symbols, orders, portfolios, and strategies
+  </Card>
+  <Card title="gb-data" icon="database">
+    Data ingestion with Parquet storage and SQLite catalog
+  </Card>
+  <Card title="gb-engine" icon="gears">
+    Event-driven simulation with realistic execution models
+  </Card>
+</CardGroup>
+
+## Use cases
+
+### Quantitative research
+
+Test hypotheses about market behavior with fast iteration cycles. Load historical data, implement your strategy logic, and analyze results with comprehensive performance metrics.
+
+### Algorithmic trading development
+
+Develop and validate algorithmic trading strategies before deploying capital. GlowBack's realistic execution simulation helps identify issues that paper trading might miss.
+
+### Portfolio optimization
+
+Backtest portfolio allocation strategies across multiple assets and time periods. Optimize parameters using built-in optimization tools.
+
+### Education and learning
+
+Learn quantitative finance concepts with working code examples. The built-in strategy library provides templates for common approaches.
+
+## What's next?
+
+<CardGroup cols={2}>
+  <Card title="Quickstart guide" icon="bolt" href="/quickstart">
+    Run your first backtest in minutes
+  </Card>
+  <Card title="Installation" icon="wrench" href="/installation">
+    Set up your development environment
+  </Card>
+  <Card title="Core concepts" icon="lightbulb" href="/concepts/architecture">
+    Understand event-driven backtesting
+  </Card>
+  <Card title="Strategy development" icon="chart-line" href="/guides/strategy-development">
+    Create custom trading strategies
+  </Card>
+</CardGroup>

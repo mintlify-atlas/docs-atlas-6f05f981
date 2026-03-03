@@ -1,0 +1,321 @@
+---
+title: Creating custom strategies
+description: Learn how to implement your own trading strategies in GlowBack
+---
+
+GlowBack provides a flexible `Strategy` trait that allows you to implement custom trading strategies with full control over market events, order management, and portfolio state.
+
+## Overview
+
+Custom strategies in GlowBack:
+
+- Implement the `Strategy` trait with lifecycle methods
+- Receive market and order events in real-time
+- Access portfolio state and market data through `StrategyContext`
+- Return actions (place orders, cancel orders, log messages)
+- Maintain internal state and parameters
+
+## Strategy lifecycle
+
+A strategy goes through the following phases:
+
+1. **Initialization** - Configure parameters and set up state
+2. **Market events** - Process incoming market data (bars, ticks, quotes)
+3. **Order events** - Handle order fills, cancellations, and rejections
+4. **Day end** - Run end-of-day calculations and rebalancing
+5. **Shutdown** - Clean up and finalize metrics
+
+<Steps>
+
+### Define your strategy struct
+
+Create a struct to hold your strategy state and configuration:
+
+```rust
+use gb_types::strategy::{Strategy, StrategyConfig, StrategyContext, StrategyAction, StrategyMetrics};
+use gb_types::market::{MarketEvent, Symbol};
+use gb_types::orders::{Order, OrderEvent, Side};
+use rust_decimal::Decimal;
+
+#[derive(Debug, Clone)]
+pub struct MyCustomStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    // Your custom state
+    lookback_period: usize,
+    threshold: Decimal,
+}
+
+impl MyCustomStrategy {
+    pub fn new(lookback_period: usize, threshold: f64) -> Self {
+        let mut config = StrategyConfig::new(
+            "my_strategy".to_string(),
+            "My Custom Strategy".to_string()
+        );
+        config.set_parameter("lookback_period", lookback_period);
+        config.set_parameter("threshold", threshold);
+        
+        Self {
+            config,
+            initialized: false,
+            lookback_period,
+            threshold: Decimal::from_f64_retain(threshold).unwrap_or(Decimal::ZERO),
+        }
+    }
+}
+```
+
+### Implement the Strategy trait
+
+Implement all required lifecycle methods:
+
+```rust
+impl Strategy for MyCustomStrategy {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+        self.config = config.clone();
+        
+        // Load parameters from config
+        self.lookback_period = self.config
+            .get_parameter("lookback_period")
+            .unwrap_or(20);
+        
+        self.threshold = self.config
+            .get_parameter::<f64>("threshold")
+            .map(Decimal::from_f64_retain)
+            .flatten()
+            .unwrap_or(Decimal::ZERO);
+        
+        self.initialized = true;
+        Ok(())
+    }
+    
+    fn on_market_event(
+        &mut self,
+        event: &MarketEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        if !self.initialized {
+            return Ok(vec![]);
+        }
+        
+        // Your trading logic here
+        let mut actions = Vec::new();
+        
+        // Example: Access market data
+        let symbol = event.symbol();
+        if let Some(buffer) = context.get_market_data(symbol) {
+            let bars = buffer.get_bars(self.lookback_period);
+            // Analyze bars and generate signals
+        }
+        
+        Ok(actions)
+    }
+    
+    fn on_order_event(
+        &mut self,
+        event: &OrderEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        // Handle order fills, cancellations, etc.
+        Ok(vec![])
+    }
+    
+    fn on_day_end(
+        &mut self,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        // Run end-of-day rebalancing or calculations
+        Ok(vec![])
+    }
+    
+    fn on_stop(
+        &mut self,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        // Clean up and finalize
+        Ok(vec![])
+    }
+    
+    fn get_config(&self) -> &StrategyConfig {
+        &self.config
+    }
+    
+    fn get_metrics(&self) -> StrategyMetrics {
+        StrategyMetrics::new(self.config.strategy_id.clone())
+    }
+}
+```
+
+### Access portfolio and market data
+
+Use the `StrategyContext` to access current state:
+
+```rust
+// Get current position
+if let Some(position) = context.get_position(symbol) {
+    let quantity = position.quantity;
+    let avg_price = position.average_price;
+}
+
+// Get current price
+if let Some(price) = context.get_current_price(symbol) {
+    // Use price for calculations
+}
+
+// Get available cash
+let cash = context.get_available_cash();
+let portfolio_value = context.get_portfolio_value();
+
+// Get market data buffer
+if let Some(buffer) = context.get_market_data(symbol) {
+    let recent_bars = buffer.get_bars(20);
+    let latest_bar = buffer.get_latest_bar();
+}
+```
+
+### Place orders
+
+Return `StrategyAction::PlaceOrder` to execute trades:
+
+```rust
+let mut actions = Vec::new();
+
+// Market order
+let order = Order::market_order(
+    symbol.clone(),
+    Side::Buy,
+    quantity,
+    self.config.strategy_id.clone()
+);
+actions.push(StrategyAction::PlaceOrder(order));
+
+// Limit order
+let limit_order = Order::limit_order(
+    symbol.clone(),
+    Side::Sell,
+    quantity,
+    limit_price,
+    self.config.strategy_id.clone()
+);
+actions.push(StrategyAction::PlaceOrder(limit_order));
+
+// Cancel order
+actions.push(StrategyAction::CancelOrder { order_id });
+
+Ok(actions)
+```
+
+### Add logging
+
+Use `StrategyAction::Log` for debugging and monitoring:
+
+```rust
+actions.push(StrategyAction::Log {
+    level: LogLevel::Info,
+    message: format!("Generated buy signal for {} at {}", symbol, price),
+});
+```
+
+</Steps>
+
+## Configuration and parameters
+
+### Strategy configuration
+
+Configure your strategy with `StrategyConfig`:
+
+```rust
+let mut config = StrategyConfig::new(
+    "my_strategy".to_string(),
+    "My Strategy".to_string()
+);
+
+config.description = "A custom trading strategy".to_string();
+config.initial_capital = Decimal::from(100000);
+config.add_symbol(Symbol::new("AAPL", "NASDAQ", AssetClass::Equity));
+
+// Set custom parameters
+config.set_parameter("lookback_period", 20);
+config.set_parameter("threshold", 0.05);
+config.set_parameter("position_size", 0.95);
+
+// Set risk limits
+config.risk_limits = RiskLimits {
+    max_position_size: Decimal::new(50000, 0),
+    max_portfolio_leverage: Decimal::from(1),
+    max_drawdown: Decimal::new(20, 2), // 20%
+    ..Default::default()
+};
+```
+
+### Reading parameters
+
+Access parameters in your strategy:
+
+```rust
+fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+    // Get typed parameters with defaults
+    let lookback: usize = config.get_parameter("lookback_period").unwrap_or(20);
+    let threshold: f64 = config.get_parameter("threshold").unwrap_or(0.05);
+    
+    // Parameters are stored as JSON values
+    if let Some(value) = config.parameters.get("custom_param") {
+        // Handle custom deserialization
+    }
+    
+    Ok(())
+}
+```
+
+## Best practices
+
+### State management
+
+- Keep all mutable state in your strategy struct
+- Use the `initialized` flag to prevent logic before initialization
+- Reset state appropriately in `on_stop` if reusing strategies
+
+### Error handling
+
+- Return descriptive error messages as `Result<_, String>`
+- Handle missing data gracefully (None values from context)
+- Validate parameters in `initialize`
+
+### Performance
+
+- Avoid expensive calculations on every market event
+- Use `on_day_end` for heavy computations
+- Cache calculated indicators rather than recomputing
+
+### Testing
+
+- Write unit tests for your strategy logic
+- Test with synthetic market data
+- Verify parameter handling and edge cases
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_strategy_initialization() {
+        let mut strategy = MyCustomStrategy::new(10, 0.05);
+        let config = StrategyConfig::new("test".to_string(), "Test".to_string());
+        
+        assert!(strategy.initialize(&config).is_ok());
+        assert_eq!(strategy.lookback_period, 10);
+    }
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Strategy interface" icon="code" href="/strategies/strategy-interface">
+    Complete reference for the Strategy trait
+  </Card>
+  <Card title="Examples" icon="lightbulb" href="/strategies/examples">
+    Real-world strategy implementations
+  </Card>
+</CardGroup>

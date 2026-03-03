@@ -1,0 +1,399 @@
+---
+title: Python backtesting engine
+description: Execute high-performance backtests with custom strategies
+---
+
+## Overview
+
+The `BacktestEngine` class is the core of GlowBack's backtesting system. It executes trading strategies against historical market data, manages portfolio state, and generates comprehensive performance metrics.
+
+## Constructor
+
+Create a new backtest engine instance:
+
+```python
+from glowback import BacktestEngine
+
+engine = BacktestEngine(
+    symbols=["AAPL", "MSFT"],
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day",
+    initial_capital=100000.0,
+    name="My Backtest"
+)
+```
+
+<ParamField path="symbols" type="list[str]" required>
+  List of symbol strings to backtest. Example: `["AAPL", "MSFT", "GOOGL"]`
+</ParamField>
+
+<ParamField path="start_date" type="str" required>
+  Backtest start date in RFC3339 format. Example: `"2020-01-01T00:00:00Z"`
+</ParamField>
+
+<ParamField path="end_date" type="str" required>
+  Backtest end date in RFC3339 format. Example: `"2023-12-31T23:59:59Z"`
+</ParamField>
+
+<ParamField path="resolution" type="str" default="day">
+  Time resolution for bars: `"minute"`/`"1m"`, `"hour"`/`"1h"`, or `"day"`/`"1d"`
+</ParamField>
+
+<ParamField path="initial_capital" type="float" default="100000.0">
+  Starting capital for the backtest in dollars
+</ParamField>
+
+<ParamField path="name" type="str" default="Python Backtest">
+  Name for this backtest run
+</ParamField>
+
+<ParamField body="returns" type="BacktestEngine">
+  A configured BacktestEngine instance ready to run
+</ParamField>
+
+## Methods
+
+### run_buy_and_hold
+
+Run a backtest using the built-in buy-and-hold strategy.
+
+```python
+engine = BacktestEngine(
+    symbols=["AAPL"],
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    initial_capital=100000.0
+)
+
+result = engine.run_buy_and_hold()
+
+# Access results
+print(f"Total Return: {result.metrics_summary['total_return']:.2f}%")
+print(f"Sharpe Ratio: {result.metrics_summary['sharpe_ratio']:.2f}")
+print(f"Max Drawdown: {result.metrics_summary['max_drawdown']:.2f}%")
+```
+
+<ParamField body="returns" type="BacktestResult">
+  Complete backtest results including metrics and equity curve
+</ParamField>
+
+<Note>
+The buy-and-hold strategy purchases equal dollar amounts of each symbol at the start and holds until the end.
+</Note>
+
+## Helper function: run_buy_and_hold
+
+For quick backtests, use the standalone `run_buy_and_hold` function:
+
+```python
+from glowback import run_buy_and_hold
+
+result = run_buy_and_hold(
+    symbols=["AAPL", "MSFT"],
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day",
+    initial_capital=100000.0,
+    name="Quick Buy & Hold Test"
+)
+
+# Display key metrics
+print(f"Final Value: ${result.metrics_summary['final_value']:,.2f}")
+print(f"Total Return: {result.metrics_summary['total_return']:.2f}%")
+```
+
+<ParamField path="symbols" type="list[str]" required>
+  List of symbol strings to backtest
+</ParamField>
+
+<ParamField path="start_date" type="str" required>
+  Start date in RFC3339 format
+</ParamField>
+
+<ParamField path="end_date" type="str" required>
+  End date in RFC3339 format
+</ParamField>
+
+<ParamField path="resolution" type="str" default="day">
+  Time resolution: "minute", "hour", or "day"
+</ParamField>
+
+<ParamField path="initial_capital" type="float" default="100000.0">
+  Starting capital in dollars
+</ParamField>
+
+<ParamField path="name" type="str" default="Python Backtest">
+  Name for this backtest
+</ParamField>
+
+<ParamField body="returns" type="BacktestResult">
+  Complete backtest results
+</ParamField>
+
+## BacktestResult class
+
+The result object returned by backtest runs.
+
+### Attributes
+
+#### metrics_summary
+
+Dictionary containing all performance metrics:
+
+```python
+result = run_buy_and_hold(...)
+metrics = result.metrics_summary
+
+# Available metrics:
+print(f"Initial Capital: ${metrics['initial_capital']:,.2f}")
+print(f"Final Value: ${metrics['final_value']:,.2f}")
+print(f"Total Return: {metrics['total_return']:.2f}%")
+print(f"Annualized Return: {metrics['annualized_return']:.2f}%")
+print(f"Volatility: {metrics['volatility']:.2f}%")
+print(f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
+print(f"Sortino Ratio: {metrics['sortino_ratio']:.2f}")
+print(f"Calmar Ratio: {metrics['calmar_ratio']:.2f}")
+print(f"Max Drawdown: {metrics['max_drawdown']:.2f}%")
+print(f"Max Drawdown Duration: {metrics['max_drawdown_duration_days']} days")
+print(f"Total Trades: {int(metrics['total_trades'])}")
+print(f"Win Rate: {metrics['win_rate']:.2f}%")
+print(f"Profit Factor: {metrics['profit_factor']:.2f}")
+print(f"Average Win: ${metrics['average_win']:,.2f}")
+print(f"Average Loss: ${metrics['average_loss']:,.2f}")
+print(f"Largest Win: ${metrics['largest_win']:,.2f}")
+print(f"Largest Loss: ${metrics['largest_loss']:,.2f}")
+print(f"Total Commissions: ${metrics['total_commissions']:,.2f}")
+print(f"VaR 95%: ${metrics['var_95']:,.2f}")
+print(f"CVaR 95%: ${metrics['cvar_95']:,.2f}")
+print(f"Skewness: {metrics['skewness']:.2f}")
+print(f"Kurtosis: {metrics['kurtosis']:.2f}")
+```
+
+#### equity_curve
+
+List of equity curve data points:
+
+```python
+result = run_buy_and_hold(...)
+
+for point in result.equity_curve:
+    print(f"Date: {point['timestamp']}")
+    print(f"  Portfolio Value: ${point['value']:,.2f}")
+    print(f"  Cash: ${point['cash']:,.2f}")
+    print(f"  Positions Value: ${point['positions']:,.2f}")
+    print(f"  Total P&L: ${point['total_pnl']:,.2f}")
+    print(f"  Daily Return: {point['daily_return']}%")
+    print(f"  Cumulative Return: {point['returns']:.2f}%")
+    print(f"  Drawdown: {point['drawdown']:.2f}%")
+```
+
+### Methods
+
+#### to_dataframe
+
+Convert equity curve to pandas DataFrame:
+
+```python
+import matplotlib.pyplot as plt
+
+result = run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z"
+)
+
+# Get DataFrame with timestamp as index
+df = result.to_dataframe(index='timestamp')
+
+print(df.head())
+print(df.describe())
+
+# Custom plotting
+df['value'].plot(title='Portfolio Value Over Time')
+plt.ylabel('Value ($)')
+plt.show()
+```
+
+<ParamField path="index" type="str" default="None">
+  Column to use as DataFrame index (typically `"timestamp"`)
+</ParamField>
+
+<ParamField body="returns" type="pandas.DataFrame">
+  DataFrame with columns: timestamp, value, cash, positions, total_pnl, daily_return, returns, drawdown
+</ParamField>
+
+#### metrics_dataframe
+
+Convert metrics summary to pandas DataFrame:
+
+```python
+result = run_buy_and_hold(...)
+
+# Get metrics as sorted DataFrame
+metrics_df = result.metrics_dataframe()
+print(metrics_df)
+
+# Output:
+#                                    value
+# annualized_return               15.234
+# average_loss                    -123.45
+# average_win                      234.56
+# calmar_ratio                      1.23
+# ...
+```
+
+<ParamField body="returns" type="pandas.DataFrame">
+  Single-column DataFrame with metric names as index
+</ParamField>
+
+#### plot_equity
+
+Plot the equity curve using matplotlib:
+
+```python
+result = run_buy_and_hold(...)
+
+# Show plot immediately
+result.plot_equity(show=True)
+
+# Or get axes for customization
+ax = result.plot_equity(show=False)
+ax.set_title('My Custom Title')
+ax.set_ylabel('Portfolio Value ($)')
+ax.grid(True, alpha=0.3)
+plt.show()
+```
+
+<ParamField path="show" type="bool" default="False">
+  If True, display the plot immediately using `plt.show()`
+</ParamField>
+
+<ParamField body="returns" type="matplotlib.axes.Axes">
+  Matplotlib axes object for further customization
+</ParamField>
+
+#### summary
+
+Display a comprehensive summary (Jupyter-friendly):
+
+```python
+result = run_buy_and_hold(...)
+
+# Show summary with plot
+summary = result.summary(plot=True, index='timestamp')
+
+# Returns dict with:
+# - 'metrics': DataFrame of performance metrics
+# - 'equity_curve': DataFrame of equity curve data
+```
+
+<ParamField path="plot" type="bool" default="False">
+  If True, display equity curve plot
+</ParamField>
+
+<ParamField path="index" type="str" default="None">
+  Column to use as index in equity curve DataFrame
+</ParamField>
+
+<ParamField body="returns" type="dict">
+  Dictionary with 'metrics' and 'equity_curve' DataFrames
+</ParamField>
+
+## Complete example
+
+Here's a complete example demonstrating the BacktestEngine:
+
+```python
+from glowback import BacktestEngine
+import matplotlib.pyplot as plt
+
+# Configure and run backtest
+engine = BacktestEngine(
+    symbols=["AAPL", "MSFT", "GOOGL"],
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day",
+    initial_capital=100000.0,
+    name="Tech Portfolio Backtest"
+)
+
+result = engine.run_buy_and_hold()
+
+# Display key metrics
+metrics = result.metrics_summary
+print("\n=== Performance Summary ===")
+print(f"Initial Capital: ${metrics['initial_capital']:,.2f}")
+print(f"Final Value: ${metrics['final_value']:,.2f}")
+print(f"Total Return: {metrics['total_return']:.2f}%")
+print(f"Annualized Return: {metrics['annualized_return']:.2f}%")
+print(f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}")
+print(f"Max Drawdown: {metrics['max_drawdown']:.2f}%")
+print(f"Volatility: {metrics['volatility']:.2f}%")
+
+# Plot equity curve
+ax = result.plot_equity(show=False)
+ax.set_title('Tech Portfolio Performance (2020-2023)')
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('backtest_results.png', dpi=300)
+plt.show()
+
+# Get detailed data as DataFrame
+df = result.to_dataframe(index='timestamp')
+print("\n=== Equity Curve Statistics ===")
+print(df[['value', 'returns', 'drawdown']].describe())
+
+# Export to CSV
+df.to_csv('equity_curve.csv')
+print("\nResults exported to equity_curve.csv")
+```
+
+## Error handling
+
+```python
+from glowback import BacktestEngine
+
+try:
+    engine = BacktestEngine(
+        symbols=[],  # Invalid: empty list
+        start_date="2020-01-01T00:00:00Z",
+        end_date="2023-12-31T23:59:59Z"
+    )
+except ValueError as e:
+    print(f"Configuration error: {e}")
+    # Output: symbols list cannot be empty
+
+try:
+    engine = BacktestEngine(
+        symbols=["AAPL"],
+        start_date="invalid-date",
+        end_date="2023-12-31T23:59:59Z"
+    )
+except ValueError as e:
+    print(f"Date error: {e}")
+    # Output: Invalid start_date format: ...
+
+try:
+    result = engine.run_buy_and_hold()
+except RuntimeError as e:
+    print(f"Execution error: {e}")
+    # Handle backtest execution failures
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Custom strategies" icon="code" href="/api/python/strategies">
+    Learn how to write custom trading strategies
+  </Card>
+  <Card title="DataManager" icon="database" href="/api/python/data-manager">
+    Load custom market data
+  </Card>
+  <Card title="Performance metrics" icon="chart-line" href="/guides/performance-analytics">
+    Understanding backtest metrics
+  </Card>
+  <Card title="Examples" icon="book" href="/guides/python-usage">
+    View complete working examples
+  </Card>
+</CardGroup>

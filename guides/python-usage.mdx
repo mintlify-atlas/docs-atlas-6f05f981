@@ -1,0 +1,496 @@
+---
+title: Python usage
+description: Use GlowBack from Python with PyO3 bindings
+---
+
+GlowBack provides Python bindings through PyO3, allowing you to run backtests and analyze results using Python and pandas.
+
+## Installation
+
+Install GlowBack using pip:
+
+```bash
+pip install glowback
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/GlowDB/GlowBack
+cd GlowBack
+maturin develop --release
+```
+
+## Quick start
+
+Run a simple backtest:
+
+```python
+import glowback as gb
+
+# Run buy-and-hold backtest
+result = gb.run_buy_and_hold(
+    symbols=["AAPL", "GOOGL"],
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T00:00:00Z",
+    resolution="day",
+    initial_capital=100000
+)
+
+# Print results
+print(f"Final value: ${result.metrics_summary['final_value']:,.2f}")
+print(f"Total return: {result.metrics_summary['total_return']:.2f}%")
+print(f"Sharpe ratio: {result.metrics_summary['sharpe_ratio']:.2f}")
+```
+
+## Core classes
+
+### Symbol
+
+Create symbol objects for different asset classes:
+
+```python
+import glowback as gb
+
+# Equities
+aapl = gb.Symbol("AAPL", "NASDAQ", "equity")
+spy = gb.Symbol("SPY", "NYSE", "equity")
+
+# Crypto
+btc = gb.Symbol("BTC-USD", "Coinbase", "crypto")
+eth = gb.Symbol("ETH-USD", "Coinbase", "crypto")
+
+# Forex
+eurjpy = gb.Symbol("EUR/JPY", "FOREX", "forex")
+
+# Print symbol info
+print(aapl.symbol)    # "AAPL"
+print(aapl.exchange)  # "NASDAQ"
+print(str(aapl))      # "AAPL (NASDAQ)"
+```
+
+### DataManager
+
+Manage data providers and load market data:
+
+```python
+import glowback as gb
+
+# Create data manager
+dm = gb.DataManager()
+
+# Add data providers
+dm.add_sample_provider()  # For testing
+dm.add_csv_provider("/path/to/data")
+dm.add_alpha_vantage_provider("YOUR_API_KEY")
+
+# Load market data
+symbol = gb.Symbol("AAPL", "NASDAQ", "equity")
+bars = dm.load_data(
+    symbol,
+    "2024-01-01T00:00:00Z",
+    "2024-12-31T00:00:00Z",
+    "day"
+)
+
+print(f"Loaded {len(bars)} bars")
+
+# Access bar data
+for bar in bars[:5]:
+    print(f"{bar.timestamp}: O={bar.open} H={bar.high} L={bar.low} C={bar.close} V={bar.volume}")
+```
+
+### BacktestEngine
+
+Run backtests with full control:
+
+```python
+import glowback as gb
+
+# Create backtest engine
+engine = gb.BacktestEngine(
+    symbols=["AAPL", "MSFT"],
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T00:00:00Z",
+    resolution="day",
+    initial_capital=100000,
+    name="Tech Portfolio Backtest"
+)
+
+# Run with built-in strategy
+result = engine.run_buy_and_hold()
+
+# Access results
+print(result.metrics_summary)
+```
+
+## Working with results
+
+### BacktestResult
+
+The `BacktestResult` object provides multiple ways to access data:
+
+```python
+# Get metrics as dictionary
+metrics = result.metrics_summary
+print(metrics['total_return'])
+print(metrics['sharpe_ratio'])
+print(metrics['max_drawdown'])
+
+# Get equity curve as list of dicts
+equity = result.equity_curve
+for point in equity[:5]:
+    print(f"{point['timestamp']}: ${point['value']:.2f}")
+```
+
+### Convert to pandas
+
+Convert results to pandas DataFrames for analysis:
+
+```python
+import pandas as pd
+import glowback as gb
+
+result = gb.run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T00:00:00Z"
+)
+
+# Equity curve as DataFrame
+df = result.to_dataframe(index="timestamp")
+print(df.head())
+
+# Metrics as DataFrame
+metrics_df = result.metrics_dataframe()
+print(metrics_df)
+```
+
+Example output:
+
+```
+# Equity curve DataFrame
+            timestamp       value       cash  positions  total_pnl  returns  drawdown  daily_return
+0 2024-01-01 00:00:00  100000.00  100000.00       0.00       0.00     0.00      0.00           NaN
+1 2024-01-02 00:00:00  100523.45   5000.00   95523.45     523.45     0.52      0.00          0.52
+2 2024-01-03 00:00:00  101245.67   5000.00   96245.67    1245.67     1.25      0.00          0.72
+
+# Metrics DataFrame
+                                value
+annualized_return              15.23
+average_loss                  -50.23
+average_win                   125.45
+calmar_ratio                    1.52
+final_value              125000.00
+initial_capital          100000.00
+max_drawdown                   10.15
+sharpe_ratio                    1.85
+total_return                   25.00
+volatility                     12.34
+win_rate                       65.50
+```
+
+## Visualization
+
+### Plot equity curve
+
+```python
+import glowback as gb
+import matplotlib.pyplot as plt
+
+result = gb.run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T00:00:00Z"
+)
+
+# Plot equity curve (returns matplotlib Axes)
+ax = result.plot_equity(show=True)
+```
+
+### Custom visualizations
+
+Use pandas and matplotlib for custom plots:
+
+```python
+import glowback as gb
+import matplotlib.pyplot as plt
+
+result = gb.run_buy_and_hold(
+    symbols=["AAPL", "GOOGL"],
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T00:00:00Z"
+)
+
+df = result.to_dataframe(index="timestamp")
+
+# Plot returns and drawdown
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
+
+# Portfolio value
+ax1.plot(df.index, df['value'])
+ax1.set_title('Portfolio Value Over Time')
+ax1.set_ylabel('Value ($)')
+ax1.grid(True)
+
+# Drawdown
+ax2.fill_between(df.index, df['drawdown'], 0, alpha=0.3, color='red')
+ax2.set_title('Drawdown')
+ax2.set_ylabel('Drawdown (%)')
+ax2.set_xlabel('Date')
+ax2.grid(True)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Jupyter notebook integration
+
+GlowBack works seamlessly in Jupyter notebooks:
+
+```python
+import glowback as gb
+import pandas as pd
+
+# Run backtest
+result = gb.run_buy_and_hold(
+    symbols=["AAPL", "MSFT", "GOOGL"],
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T00:00:00Z",
+    initial_capital=100000
+)
+
+# Display summary (returns dict with metrics and equity DataFrames)
+summary = result.summary(plot=True)
+
+# Display metrics table
+display(summary['metrics'])
+
+# Display equity curve
+display(summary['equity_curve'].head(10))
+```
+
+## Advanced usage
+
+### Multiple backtests
+
+Compare different strategies or parameters:
+
+```python
+import glowback as gb
+import pandas as pd
+
+symbols = ["AAPL", "GOOGL", "MSFT"]
+start = "2024-01-01T00:00:00Z"
+end = "2024-12-31T00:00:00Z"
+
+# Run backtests with different capital allocations
+results = []
+for capital in [50000, 100000, 200000]:
+    result = gb.run_buy_and_hold(
+        symbols=symbols,
+        start_date=start,
+        end_date=end,
+        initial_capital=capital,
+        name=f"Capital ${capital:,}"
+    )
+    results.append({
+        'capital': capital,
+        'final_value': result.metrics_summary['final_value'],
+        'total_return': result.metrics_summary['total_return'],
+        'sharpe_ratio': result.metrics_summary['sharpe_ratio'],
+        'max_drawdown': result.metrics_summary['max_drawdown']
+    })
+
+# Compare results
+comparison = pd.DataFrame(results)
+print(comparison)
+```
+
+### Custom data loading
+
+Load data from custom sources:
+
+```python
+import glowback as gb
+import pandas as pd
+
+# Load your data into pandas
+df = pd.read_csv('my_data.csv')
+
+# Save in GlowBack CSV format
+df.to_csv('AAPL_day.csv', index=False, columns=[
+    'Date', 'Open', 'High', 'Low', 'Close', 'Volume'
+])
+
+# Use CSV provider
+dm = gb.DataManager()
+dm.add_csv_provider('.')
+
+# Now data is available for backtesting
+result = gb.run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T00:00:00Z"
+)
+```
+
+## Error handling
+
+Handle errors gracefully:
+
+```python
+import glowback as gb
+
+try:
+    result = gb.run_buy_and_hold(
+        symbols=["INVALID_SYMBOL"],
+        start_date="2024-01-01T00:00:00Z",
+        end_date="2024-12-31T00:00:00Z"
+    )
+except RuntimeError as e:
+    print(f"Backtest failed: {e}")
+    # Handle error (e.g., use sample data instead)
+    dm = gb.DataManager()
+    dm.add_sample_provider()
+```
+
+## API reference
+
+### Module: glowback
+
+<ParamField path="__version__" type="str">
+  GlowBack version string
+</ParamField>
+
+### Function: run_buy_and_hold
+
+<ParamField path="symbols" type="list[str]" required>
+  List of symbol tickers to trade
+</ParamField>
+
+<ParamField path="start_date" type="str" required>
+  Start date in RFC3339 format (e.g., "2024-01-01T00:00:00Z")
+</ParamField>
+
+<ParamField path="end_date" type="str" required>
+  End date in RFC3339 format
+</ParamField>
+
+<ParamField path="resolution" type="str" default="day">
+  Data resolution: "minute", "hour", "day", "week", "month"
+</ParamField>
+
+<ParamField path="initial_capital" type="float" default="100000">
+  Starting capital in dollars
+</ParamField>
+
+<ParamField path="name" type="str" default="Python Backtest">
+  Backtest name for identification
+</ParamField>
+
+**Returns**: `BacktestResult`
+
+### Class: Symbol
+
+```python
+Symbol(symbol: str, exchange: str, asset_class: str)
+```
+
+<ParamField path="symbol" type="str">
+  Ticker symbol (e.g., "AAPL")
+</ParamField>
+
+<ParamField path="exchange" type="str">
+  Exchange name (e.g., "NASDAQ")
+</ParamField>
+
+<ParamField path="asset_class" type="str">
+  Asset class: "equity", "crypto", "forex", "commodity", "bond"
+</ParamField>
+
+### Class: BacktestResult
+
+**Attributes**:
+
+<ResponseField name="metrics_summary" type="dict">
+  Dictionary of all performance metrics
+</ResponseField>
+
+<ResponseField name="equity_curve" type="list[dict]">
+  List of equity curve points with timestamp, value, cash, positions, returns, drawdown
+</ResponseField>
+
+**Methods**:
+
+<ResponseField name="to_dataframe(index=None)" type="pd.DataFrame">
+  Convert equity curve to pandas DataFrame
+  
+  - `index`: Optional column to use as index (e.g., "timestamp")
+</ResponseField>
+
+<ResponseField name="metrics_dataframe()" type="pd.DataFrame">
+  Convert metrics to pandas DataFrame with sorted index
+</ResponseField>
+
+<ResponseField name="plot_equity(show=False)" type="matplotlib.axes.Axes">
+  Plot equity curve using matplotlib
+  
+  - `show`: If True, calls `plt.show()` to display the plot
+</ResponseField>
+
+<ResponseField name="summary(plot=False, index=None)" type="dict">
+  Return dict with 'metrics' and 'equity_curve' DataFrames
+  
+  - `plot`: If True, also plots the equity curve
+  - `index`: Optional column to use as index for equity curve
+</ResponseField>
+
+## Best practices
+
+<AccordionGroup>
+  <Accordion title="Use ISO 8601 dates">
+    Always use RFC3339 format for dates: `"2024-01-01T00:00:00Z"`. This ensures proper timezone handling.
+  </Accordion>
+  
+  <Accordion title="Check provider count">
+    Ensure at least one data provider is configured:
+    ```python
+    dm = gb.DataManager()
+    print(f"Providers: {dm.get_provider_count()}")
+    if dm.get_provider_count() == 0:
+        dm.add_sample_provider()
+    ```
+  </Accordion>
+  
+  <Accordion title="Convert to pandas early">
+    Convert results to pandas DataFrames for easier analysis:
+    ```python
+    result = gb.run_buy_and_hold(...)
+    df = result.to_dataframe(index="timestamp")
+    # Now use pandas methods
+    print(df.describe())
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle missing data">
+    Not all symbols have data for all date ranges. Use try/except or add a sample provider as fallback.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Strategy development" icon="code" href="/guides/strategy-development">
+    Learn to build custom strategies in Rust
+  </Card>
+  <Card title="Performance analytics" icon="chart-bar" href="/guides/performance-analytics">
+    Deep dive into performance metrics
+  </Card>
+  <Card title="Data sources" icon="database" href="/guides/data-sources">
+    Configure data providers
+  </Card>
+  <Card title="Backtesting" icon="chart-line" href="/guides/backtesting">
+    Advanced backtesting configuration
+  </Card>
+</CardGroup>

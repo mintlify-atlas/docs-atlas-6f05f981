@@ -1,0 +1,460 @@
+---
+title: 'Backtesting engine API'
+description: 'Event-driven backtesting engine and market simulation'
+---
+
+## BacktestEngine
+
+Main entry point for running backtests.
+
+```rust
+pub struct BacktestEngine {
+    config: BacktestConfig,
+    data_manager: DataManager,
+}
+```
+
+<ParamField path="config" type="BacktestConfig">
+  Backtest configuration and parameters
+</ParamField>
+
+<ParamField path="data_manager" type="DataManager">
+  Data manager for loading market data
+</ParamField>
+
+**Methods:**
+
+```rust
+impl BacktestEngine {
+    pub async fn new(config: BacktestConfig) -> GbResult<Self>
+    
+    pub async fn load_market_data(&mut self, symbols: Vec<Symbol>) -> GbResult<()>
+    
+    pub async fn run_with_strategy(
+        &mut self,
+        strategy: Box<dyn Strategy>,
+    ) -> GbResult<BacktestResult>
+    
+    pub async fn run(&mut self) -> GbResult<BacktestResult>
+    
+    pub fn get_config(&self) -> &BacktestConfig
+}
+```
+
+**Example:**
+
+```rust
+use gb_types::{BacktestConfig, StrategyConfig, Symbol, Resolution};
+use gb_engine::BacktestEngine;
+use chrono::{Duration, Utc};
+use rust_decimal::Decimal;
+
+// Create backtest configuration
+let strategy_config = StrategyConfig::new(
+    "my_strategy".to_string(),
+    "My Strategy".to_string()
+);
+
+let mut config = BacktestConfig::new("My Backtest".to_string(), strategy_config);
+config.start_date = Utc::now() - Duration::days(365);
+config.end_date = Utc::now();
+config.initial_capital = Decimal::from(100000);
+config.resolution = Resolution::Day;
+config.symbols = vec![Symbol::equity("AAPL")];
+
+// Create engine and run backtest
+let mut engine = BacktestEngine::new(config).await?;
+let strategy = Box::new(BuyAndHoldStrategy::new());
+let result = engine.run_with_strategy(strategy).await?;
+
+// Analyze results
+println!("Total return: {:.2}%", result.performance_metrics.unwrap().total_return * Decimal::from(100));
+```
+
+## Engine
+
+Enhanced event-driven backtesting engine.
+
+```rust
+pub struct Engine {
+    config: BacktestConfig,
+    portfolio: Portfolio,
+    strategy: Box<dyn Strategy>,
+    current_time: DateTime<Utc>,
+    market_data: HashMap<Symbol, Vec<Bar>>,
+    pending_orders: Vec<Order>,
+    strategy_metrics: StrategyMetrics,
+    equity_curve: Vec<EquityCurvePoint>,
+    equity_peak: Decimal,
+}
+```
+
+**Methods:**
+
+```rust
+impl Engine {
+    pub async fn new(
+        config: BacktestConfig,
+        data_manager: &mut DataManager,
+        strategy: Box<dyn Strategy>,
+    ) -> GbResult<Self>
+    
+    pub async fn run(&mut self) -> GbResult<BacktestResult>
+}
+```
+
+**Example:**
+
+```rust
+let mut data_manager = DataManager::new().await?;
+let strategy = Box::new(MovingAverageCrossoverStrategy::new(10, 20));
+
+let mut engine = Engine::new(config, &mut data_manager, strategy).await?;
+let result = engine.run().await?;
+```
+
+## Backtest configuration
+
+### BacktestConfig
+
+Backtest configuration and parameters.
+
+```rust
+pub struct BacktestConfig {
+    pub id: BacktestId,
+    pub name: String,
+    pub description: String,
+    pub start_date: DateTime<Utc>,
+    pub end_date: DateTime<Utc>,
+    pub initial_capital: Decimal,
+    pub symbols: Vec<Symbol>,
+    pub resolution: Resolution,
+    pub strategy_config: StrategyConfig,
+    pub execution_settings: ExecutionSettings,
+    pub data_settings: DataSettings,
+    pub created_at: DateTime<Utc>,
+}
+```
+
+<ParamField path="name" type="String">
+  Backtest name
+</ParamField>
+
+<ParamField path="start_date" type="DateTime<Utc>">
+  Backtest start date
+</ParamField>
+
+<ParamField path="end_date" type="DateTime<Utc>">
+  Backtest end date
+</ParamField>
+
+<ParamField path="initial_capital" type="Decimal">
+  Starting capital
+</ParamField>
+
+<ParamField path="symbols" type="Vec<Symbol>">
+  Symbols to backtest
+</ParamField>
+
+<ParamField path="resolution" type="Resolution">
+  Data resolution
+</ParamField>
+
+<ParamField path="strategy_config" type="StrategyConfig">
+  Strategy configuration
+</ParamField>
+
+<ParamField path="execution_settings" type="ExecutionSettings">
+  Execution and slippage settings
+</ParamField>
+
+**Methods:**
+
+```rust
+impl BacktestConfig {
+    pub fn new(name: String, strategy_config: StrategyConfig) -> Self
+    pub fn with_symbols(mut self, symbols: Vec<Symbol>) -> Self
+    pub fn with_date_range(mut self, start: DateTime<Utc>, end: DateTime<Utc>) -> Self
+    pub fn with_capital(mut self, capital: Decimal) -> Self
+    pub fn with_resolution(mut self, resolution: Resolution) -> Self
+}
+```
+
+### ExecutionSettings
+
+Execution settings for realistic trading simulation.
+
+```rust
+pub struct ExecutionSettings {
+    pub commission_per_share: Decimal,
+    pub commission_percentage: Decimal,
+    pub minimum_commission: Decimal,
+    pub slippage_model: SlippageModel,
+    pub latency_model: LatencyModel,
+    pub market_impact_model: MarketImpactModel,
+}
+```
+
+<ParamField path="commission_per_share" type="Decimal">
+  Per-share commission (default: $0.001)
+</ParamField>
+
+<ParamField path="commission_percentage" type="Decimal">
+  Percentage commission (default: 0.05%)
+</ParamField>
+
+<ParamField path="minimum_commission" type="Decimal">
+  Minimum commission per order (default: $1.00)
+</ParamField>
+
+<ParamField path="slippage_model" type="SlippageModel">
+  Slippage model (Linear, SquareRoot, etc.)
+</ParamField>
+
+### SlippageModel
+
+Slippage model for order execution.
+
+```rust
+pub enum SlippageModel {
+    None,
+    Fixed { basis_points: u32 },
+    Linear { basis_points: u32 },
+    SquareRoot { factor: Decimal },
+    VolumeWeighted { min_bps: u32, max_bps: u32 },
+}
+```
+
+**Default:** `Linear { basis_points: 5 }` (5 basis points)
+
+## Backtest results
+
+### BacktestResult
+
+Backtest result with comprehensive metrics.
+
+```rust
+pub struct BacktestResult {
+    pub id: BacktestId,
+    pub config: BacktestConfig,
+    pub status: BacktestStatus,
+    pub start_time: DateTime<Utc>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub duration_seconds: Option<u64>,
+    pub final_portfolio: Option<Portfolio>,
+    pub strategy_metrics: Option<StrategyMetrics>,
+    pub performance_metrics: Option<PerformanceMetrics>,
+    pub equity_curve: Vec<EquityCurvePoint>,
+    pub trade_log: Vec<TradeRecord>,
+    pub error_message: Option<String>,
+    pub metadata: HashMap<String, serde_json::Value>,
+}
+```
+
+<ParamField path="final_portfolio" type="Option<Portfolio>">
+  Final portfolio state
+</ParamField>
+
+<ParamField path="strategy_metrics" type="Option<StrategyMetrics>">
+  Strategy-specific metrics
+</ParamField>
+
+<ParamField path="performance_metrics" type="Option<PerformanceMetrics>">
+  Portfolio performance metrics
+</ParamField>
+
+<ParamField path="equity_curve" type="Vec<EquityCurvePoint>">
+  Equity curve over time
+</ParamField>
+
+**Methods:**
+
+```rust
+impl BacktestResult {
+    pub fn new(config: BacktestConfig) -> Self
+    pub fn mark_started(&mut self)
+    pub fn mark_completed(&mut self, portfolio: Portfolio, metrics: StrategyMetrics)
+    pub fn mark_failed(&mut self, error: String)
+}
+```
+
+### PerformanceMetrics
+
+Performance metrics for backtest evaluation.
+
+```rust
+pub struct PerformanceMetrics {
+    pub total_return: Decimal,
+    pub annualized_return: Decimal,
+    pub volatility: Decimal,
+    pub sharpe_ratio: Option<Decimal>,
+    pub sortino_ratio: Option<Decimal>,
+    pub calmar_ratio: Option<Decimal>,
+    pub max_drawdown: Decimal,
+    pub max_drawdown_duration_days: Option<u32>,
+    pub var_95: Option<Decimal>,
+    pub cvar_95: Option<Decimal>,
+    pub win_rate: Decimal,
+    pub profit_factor: Option<Decimal>,
+    pub total_trades: u64,
+    pub total_commissions: Decimal,
+}
+```
+
+<ParamField path="total_return" type="Decimal">
+  Total return over backtest period
+</ParamField>
+
+<ParamField path="annualized_return" type="Decimal">
+  Annualized return
+</ParamField>
+
+<ParamField path="volatility" type="Decimal">
+  Annualized volatility (standard deviation of returns)
+</ParamField>
+
+<ParamField path="sharpe_ratio" type="Option<Decimal>">
+  Sharpe ratio (risk-adjusted return)
+</ParamField>
+
+<ParamField path="sortino_ratio" type="Option<Decimal>">
+  Sortino ratio (downside risk-adjusted return)
+</ParamField>
+
+<ParamField path="max_drawdown" type="Decimal">
+  Maximum drawdown from peak
+</ParamField>
+
+<ParamField path="var_95" type="Option<Decimal>">
+  Value at Risk (95% confidence)
+</ParamField>
+
+<ParamField path="cvar_95" type="Option<Decimal>">
+  Conditional Value at Risk (95% confidence)
+</ParamField>
+
+**Methods:**
+
+```rust
+impl PerformanceMetrics {
+    pub fn calculate(portfolio: &Portfolio) -> Self
+    pub fn calculate_with_trades(portfolio: &Portfolio, trades: &[TradeRecord]) -> Self
+}
+```
+
+### EquityCurvePoint
+
+Point on the equity curve.
+
+```rust
+pub struct EquityCurvePoint {
+    pub timestamp: DateTime<Utc>,
+    pub portfolio_value: Decimal,
+    pub cash: Decimal,
+    pub positions_value: Decimal,
+    pub total_pnl: Decimal,
+    pub daily_return: Option<Decimal>,
+    pub cumulative_return: Decimal,
+    pub drawdown: Decimal,
+}
+```
+
+## Market simulator
+
+### MarketSimulator
+
+Comprehensive market simulator for realistic backtesting.
+
+```rust
+pub struct MarketSimulator {
+    events: BTreeMap<DateTime<Utc>, Vec<TimestampedEvent>>,
+    current_data: HashMap<Symbol, Bar>,
+    current_events: VecDeque<TimestampedEvent>,
+    current_time: Option<DateTime<Utc>>,
+    start_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
+    symbols: Vec<Symbol>,
+    resolution: Resolution,
+    market_hours: MarketHours,
+}
+```
+
+**Methods:**
+
+```rust
+impl MarketSimulator {
+    pub fn new() -> Self
+    pub fn with_market_hours(mut self, market_hours: MarketHours) -> Self
+    pub fn with_resolution(mut self, resolution: Resolution) -> Self
+    
+    pub fn add_data_feed(&mut self, symbol: Symbol, bars: Vec<Bar>) -> GbResult<()>
+    pub fn initialize(&mut self) -> GbResult<()>
+    
+    pub fn next_events(&mut self) -> GbResult<Vec<TimestampedEvent>>
+    pub fn get_current_data(&self, symbol: &Symbol) -> Option<&Bar>
+    pub fn get_all_current_data(&self) -> &HashMap<Symbol, Bar>
+    
+    pub fn current_time(&self) -> Option<DateTime<Utc>>
+    pub fn is_complete(&self) -> bool
+    pub fn progress(&self) -> f64
+    pub fn reset(&mut self)
+    pub fn get_stats(&self) -> SimulationStats
+    
+    pub fn is_market_open(&self, time: DateTime<Utc>) -> bool
+    
+    pub async fn run_with_callback<F, Fut>(&mut self, callback: F) -> GbResult<()>
+    where
+        F: FnMut(DateTime<Utc>, Vec<TimestampedEvent>) -> Fut,
+        Fut: std::future::Future<Output = GbResult<()>>,
+}
+```
+
+**Example:**
+
+```rust
+let mut simulator = MarketSimulator::new()
+    .with_market_hours(MarketHours::for_asset_class(AssetClass::Equity))
+    .with_resolution(Resolution::Day);
+
+// Add data feeds
+simulator.add_data_feed(Symbol::equity("AAPL"), aapl_bars)?;
+simulator.add_data_feed(Symbol::equity("GOOGL"), googl_bars)?;
+
+// Initialize and run
+simulator.initialize()?;
+
+while !simulator.is_complete() {
+    let events = simulator.next_events()?;
+    
+    for event in events {
+        // Process each market event
+        println!("Event at {}: {:?}", event.timestamp, event.event);
+    }
+}
+```
+
+### MarketHours
+
+Market hours configuration.
+
+```rust
+pub struct MarketHours {
+    pub open_hour: u32,
+    pub close_hour: u32,
+    pub weekend_trading: bool,
+    pub round_the_clock: bool,
+}
+```
+
+**Methods:**
+
+```rust
+impl MarketHours {
+    pub fn for_asset_class(asset_class: AssetClass) -> Self
+}
+```
+
+**Defaults by asset class:**
+- **Crypto:** 24/7 trading (0-24 hours, weekends enabled)
+- **Forex:** 24h weekdays (0-24 hours, no weekends)
+- **Equity:** US market hours (14-21 UTC, no weekends)

@@ -1,0 +1,471 @@
+---
+title: 'Core types'
+description: 'Fundamental types for market data, orders, and portfolios'
+---
+
+## Market types
+
+### Symbol
+
+Represents a financial symbol with exchange information.
+
+```rust
+pub struct Symbol {
+    pub symbol: String,
+    pub exchange: String,
+    pub asset_class: AssetClass,
+}
+```
+
+<ParamField path="symbol" type="String">
+  Ticker symbol (e.g., "AAPL", "BTC-USD")
+</ParamField>
+
+<ParamField path="exchange" type="String">
+  Exchange identifier (e.g., "NASDAQ", "BINANCE")
+</ParamField>
+
+<ParamField path="asset_class" type="AssetClass">
+  Type of financial instrument
+</ParamField>
+
+**Methods:**
+
+```rust
+impl Symbol {
+    pub fn new(symbol: &str, exchange: &str, asset_class: AssetClass) -> Self
+    pub fn equity(symbol: &str) -> Self
+    pub fn crypto(symbol: &str) -> Self
+}
+```
+
+**Example:**
+
+```rust
+let aapl = Symbol::equity("AAPL");
+let btc = Symbol::crypto("BTC-USD");
+let custom = Symbol::new("EURUSD", "FOREX", AssetClass::Forex);
+```
+
+### AssetClass
+
+Asset classes supported by the platform.
+
+```rust
+pub enum AssetClass {
+    Equity,
+    Crypto,
+    Forex,
+    Commodity,
+    Bond,
+}
+```
+
+**Methods:**
+
+```rust
+impl AssetClass {
+    pub fn is_24_7(&self) -> bool
+    pub fn supports_fractional_quantities(&self) -> bool
+    pub fn default_exchange(&self) -> &'static str
+}
+```
+
+**Example:**
+
+```rust
+assert!(AssetClass::Crypto.is_24_7());
+assert!(AssetClass::Crypto.supports_fractional_quantities());
+assert_eq!(AssetClass::Crypto.default_exchange(), "BINANCE");
+```
+
+### Bar
+
+OHLCV bar data with volume and timestamp.
+
+```rust
+pub struct Bar {
+    pub symbol: Symbol,
+    pub timestamp: DateTime<Utc>,
+    pub open: Decimal,
+    pub high: Decimal,
+    pub low: Decimal,
+    pub close: Decimal,
+    pub volume: Decimal,
+    pub resolution: Resolution,
+}
+```
+
+<ParamField path="symbol" type="Symbol">
+  Symbol for this bar
+</ParamField>
+
+<ParamField path="timestamp" type="DateTime<Utc>">
+  Bar timestamp (UTC)
+</ParamField>
+
+<ParamField path="open" type="Decimal">
+  Opening price
+</ParamField>
+
+<ParamField path="high" type="Decimal">
+  Highest price during period
+</ParamField>
+
+<ParamField path="low" type="Decimal">
+  Lowest price during period
+</ParamField>
+
+<ParamField path="close" type="Decimal">
+  Closing price
+</ParamField>
+
+<ParamField path="volume" type="Decimal">
+  Trading volume
+</ParamField>
+
+<ParamField path="resolution" type="Resolution">
+  Time resolution (minute, hour, day, etc.)
+</ParamField>
+
+**Methods:**
+
+```rust
+impl Bar {
+    pub fn new(
+        symbol: Symbol,
+        timestamp: DateTime<Utc>,
+        open: Decimal,
+        high: Decimal,
+        low: Decimal,
+        close: Decimal,
+        volume: Decimal,
+        resolution: Resolution,
+    ) -> Self
+    
+    pub fn typical_price(&self) -> Decimal
+    pub fn true_range(&self, prev_close: Option<Decimal>) -> Decimal
+}
+```
+
+### Resolution
+
+Time resolution for market data.
+
+```rust
+pub enum Resolution {
+    Tick,
+    Second,
+    Minute,
+    FiveMinute,
+    FifteenMinute,
+    Hour,
+    FourHour,
+    Day,
+    Week,
+    Month,
+}
+```
+
+**Methods:**
+
+```rust
+impl Resolution {
+    pub fn to_seconds(&self) -> Option<u64>
+}
+```
+
+## Order types
+
+### Order
+
+Order request from strategy.
+
+```rust
+pub struct Order {
+    pub id: OrderId,
+    pub symbol: Symbol,
+    pub side: Side,
+    pub quantity: Decimal,
+    pub order_type: OrderType,
+    pub time_in_force: TimeInForce,
+    pub submitted_at: DateTime<Utc>,
+    pub status: OrderStatus,
+    pub filled_quantity: Decimal,
+    pub remaining_quantity: Decimal,
+    pub average_fill_price: Option<Decimal>,
+    pub strategy_id: String,
+    pub metadata: serde_json::Value,
+}
+```
+
+<ParamField path="id" type="OrderId">
+  Unique order identifier (UUID)
+</ParamField>
+
+<ParamField path="symbol" type="Symbol">
+  Symbol to trade
+</ParamField>
+
+<ParamField path="side" type="Side">
+  Buy or Sell
+</ParamField>
+
+<ParamField path="quantity" type="Decimal">
+  Order quantity
+</ParamField>
+
+<ParamField path="order_type" type="OrderType">
+  Market, Limit, Stop, or StopLimit
+</ParamField>
+
+<ParamField path="time_in_force" type="TimeInForce">
+  Day, GTC, IOC, or FOK
+</ParamField>
+
+<ParamField path="status" type="OrderStatus">
+  Current order status
+</ParamField>
+
+**Methods:**
+
+```rust
+impl Order {
+    pub fn new(
+        symbol: Symbol,
+        side: Side,
+        quantity: Decimal,
+        order_type: OrderType,
+        strategy_id: String,
+    ) -> Self
+    
+    pub fn market_order(symbol: Symbol, side: Side, quantity: Decimal, strategy_id: String) -> Self
+    pub fn limit_order(symbol: Symbol, side: Side, quantity: Decimal, price: Decimal, strategy_id: String) -> Self
+    pub fn stop_order(symbol: Symbol, side: Side, quantity: Decimal, stop_price: Decimal, strategy_id: String) -> Self
+    
+    pub fn is_buy(&self) -> bool
+    pub fn is_sell(&self) -> bool
+    pub fn is_filled(&self) -> bool
+    pub fn is_active(&self) -> bool
+    pub fn fill(&mut self, quantity: Decimal, price: Decimal)
+    pub fn cancel(&mut self)
+}
+```
+
+**Example:**
+
+```rust
+let order = Order::market_order(
+    Symbol::equity("AAPL"),
+    Side::Buy,
+    Decimal::from(100),
+    "my_strategy".to_string()
+);
+```
+
+### Side
+
+Direction of an order.
+
+```rust
+pub enum Side {
+    Buy,
+    Sell,
+}
+```
+
+**Methods:**
+
+```rust
+impl Side {
+    pub fn opposite(&self) -> Side
+    pub fn sign(&self) -> i32
+}
+```
+
+### OrderType
+
+Order types supported by the engine.
+
+```rust
+pub enum OrderType {
+    Market,
+    Limit { price: Decimal },
+    Stop { stop_price: Decimal },
+    StopLimit { stop_price: Decimal, limit_price: Decimal },
+}
+```
+
+### Fill
+
+Order execution record.
+
+```rust
+pub struct Fill {
+    pub id: Uuid,
+    pub order_id: OrderId,
+    pub symbol: Symbol,
+    pub side: Side,
+    pub quantity: Decimal,
+    pub price: Decimal,
+    pub commission: Decimal,
+    pub executed_at: DateTime<Utc>,
+    pub strategy_id: String,
+}
+```
+
+<ParamField path="price" type="Decimal">
+  Execution price
+</ParamField>
+
+<ParamField path="commission" type="Decimal">
+  Commission charged for this fill
+</ParamField>
+
+<ParamField path="executed_at" type="DateTime<Utc>">
+  Fill timestamp
+</ParamField>
+
+**Methods:**
+
+```rust
+impl Fill {
+    pub fn gross_amount(&self) -> Decimal
+    pub fn net_amount(&self) -> Decimal
+}
+```
+
+## Portfolio types
+
+### Portfolio
+
+Portfolio state and management.
+
+```rust
+pub struct Portfolio {
+    pub account_id: String,
+    pub initial_capital: Decimal,
+    pub cash: Decimal,
+    pub positions: HashMap<Symbol, Position>,
+    pub total_equity: Decimal,
+    pub total_pnl: Decimal,
+    pub total_realized_pnl: Decimal,
+    pub total_unrealized_pnl: Decimal,
+    pub total_commissions: Decimal,
+    pub last_updated: DateTime<Utc>,
+    pub daily_returns: Vec<DailyReturn>,
+}
+```
+
+<ParamField path="account_id" type="String">
+  Portfolio identifier
+</ParamField>
+
+<ParamField path="initial_capital" type="Decimal">
+  Starting capital
+</ParamField>
+
+<ParamField path="cash" type="Decimal">
+  Current cash balance
+</ParamField>
+
+<ParamField path="positions" type="HashMap<Symbol, Position>">
+  Current positions by symbol
+</ParamField>
+
+<ParamField path="total_equity" type="Decimal">
+  Total portfolio value (cash + positions)
+</ParamField>
+
+<ParamField path="total_pnl" type="Decimal">
+  Total profit and loss (realized + unrealized)
+</ParamField>
+
+**Methods:**
+
+```rust
+impl Portfolio {
+    pub fn new(account_id: String, initial_capital: Decimal) -> Self
+    pub fn apply_fill(&mut self, fill: &Fill)
+    pub fn update_market_prices(&mut self, prices: &HashMap<Symbol, Decimal>)
+    pub fn get_position(&self, symbol: &Symbol) -> Option<&Position>
+    pub fn get_available_cash(&self) -> Decimal
+    pub fn get_total_return(&self) -> Decimal
+    pub fn get_sharpe_ratio(&self, risk_free_rate: Decimal) -> Option<Decimal>
+    pub fn get_max_drawdown(&self) -> Decimal
+    pub fn add_daily_return(&mut self, date: DateTime<Utc>, daily_return: Decimal)
+}
+```
+
+**Example:**
+
+```rust
+let mut portfolio = Portfolio::new("my_account".to_string(), Decimal::from(100000));
+
+// Apply a fill
+let fill = Fill::new(
+    order_id,
+    Symbol::equity("AAPL"),
+    Side::Buy,
+    Decimal::from(10),
+    Decimal::from(150),
+    Decimal::from(1),
+    "strategy_1".to_string()
+);
+portfolio.apply_fill(&fill);
+
+// Check position
+if let Some(position) = portfolio.get_position(&Symbol::equity("AAPL")) {
+    println!("Position: {} shares at avg price {}", position.quantity, position.average_price);
+}
+```
+
+### Position
+
+Portfolio position for a specific symbol.
+
+```rust
+pub struct Position {
+    pub symbol: Symbol,
+    pub quantity: Decimal,
+    pub average_price: Decimal,
+    pub market_value: Decimal,
+    pub unrealized_pnl: Decimal,
+    pub realized_pnl: Decimal,
+    pub last_updated: DateTime<Utc>,
+}
+```
+
+<ParamField path="quantity" type="Decimal">
+  Position size (positive for long, negative for short)
+</ParamField>
+
+<ParamField path="average_price" type="Decimal">
+  Average entry price
+</ParamField>
+
+<ParamField path="market_value" type="Decimal">
+  Current market value of position
+</ParamField>
+
+<ParamField path="unrealized_pnl" type="Decimal">
+  Unrealized profit/loss
+</ParamField>
+
+<ParamField path="realized_pnl" type="Decimal">
+  Realized profit/loss from closed portions
+</ParamField>
+
+**Methods:**
+
+```rust
+impl Position {
+    pub fn new(symbol: Symbol) -> Self
+    pub fn is_long(&self) -> bool
+    pub fn is_short(&self) -> bool
+    pub fn is_flat(&self) -> bool
+    pub fn apply_fill(&mut self, fill: &Fill)
+    pub fn update_market_price(&mut self, market_price: Decimal)
+    pub fn total_pnl(&self) -> Decimal
+}
+```

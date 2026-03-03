@@ -1,0 +1,512 @@
+---
+title: Backtest endpoints
+description: Create, monitor, and retrieve results for backtesting runs
+---
+
+## Create backtest
+
+<CodeGroup>
+```bash POST /backtests
+curl -X POST http://127.0.0.1:8000/backtests \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbols": ["AAPL", "MSFT"],
+    "start_date": "2023-01-01T00:00:00Z",
+    "end_date": "2023-12-31T23:59:59Z",
+    "resolution": "day",
+    "strategy": {
+      "name": "buy_and_hold",
+      "params": {}
+    },
+    "initial_capital": 1000000.0,
+    "currency": "USD"
+  }'
+```
+</CodeGroup>
+
+Create and start a new backtest run. The backtest executes asynchronously and returns immediately with a `run_id` and initial status.
+
+### Request body
+
+<ParamField path="symbols" type="string[]" required>
+  List of ticker symbols to backtest (1-100 symbols)
+  
+  Example: `["AAPL", "MSFT", "GOOGL"]`
+</ParamField>
+
+<ParamField path="start_date" type="datetime" required>
+  Backtest start date and time in ISO 8601 format
+  
+  Example: `"2023-01-01T00:00:00Z"`
+</ParamField>
+
+<ParamField path="end_date" type="datetime" required>
+  Backtest end date and time in ISO 8601 format
+  
+  Example: `"2023-12-31T23:59:59Z"`
+</ParamField>
+
+<ParamField path="resolution" type="string" default="day">
+  Data resolution for the backtest
+  
+  Options: `tick`, `second`, `minute`, `hour`, `day`
+</ParamField>
+
+<ParamField path="strategy" type="object">
+  Strategy configuration
+  
+  <ParamField path="strategy.name" type="string" required>
+    Strategy identifier (lowercase, alphanumeric and underscores only, 1-128 chars)
+    
+    Example: `"buy_and_hold"`
+  </ParamField>
+  
+  <ParamField path="strategy.params" type="object" default="{}">
+    Strategy-specific parameters as key-value pairs
+    
+    Example: `{"window": 20, "threshold": 0.05}`
+  </ParamField>
+</ParamField>
+
+<ParamField path="execution" type="object" default="{}">
+  Execution cost and latency modeling
+  
+  <ParamField path="execution.slippage_bps" type="number">
+    Slippage in basis points (1 bp = 0.01%)
+    
+    Example: `5.0` (0.05% slippage)
+  </ParamField>
+  
+  <ParamField path="execution.commission_bps" type="number">
+    Commission in basis points
+    
+    Example: `2.5` (0.025% commission)
+  </ParamField>
+  
+  <ParamField path="execution.latency_ms" type="integer">
+    Execution latency in milliseconds
+    
+    Example: `100`
+  </ParamField>
+</ParamField>
+
+<ParamField path="initial_capital" type="number" default="1000000.0">
+  Starting capital for the backtest (must be > 0 and ≤ 1 trillion)
+  
+  Example: `1000000.0`
+</ParamField>
+
+<ParamField path="currency" type="string" default="USD">
+  Currency code (3-5 uppercase letters)
+  
+  Example: `"USD"`, `"EUR"`, `"GBP"`
+</ParamField>
+
+<ParamField path="timezone" type="string" default="UTC">
+  Timezone for date/time interpretation (max 64 chars)
+  
+  Example: `"America/New_York"`, `"Europe/London"`
+</ParamField>
+
+### Response
+
+<ResponseField name="run_id" type="string">
+  Unique identifier for the backtest run
+</ResponseField>
+
+<ResponseField name="state" type="string">
+  Current state of the backtest
+  
+  Values: `queued`, `running`, `completed`, `failed`
+</ResponseField>
+
+<ResponseField name="progress" type="number">
+  Completion progress (0.0 to 1.0)
+</ResponseField>
+
+<ResponseField name="created_at" type="datetime">
+  Timestamp when the backtest was created
+</ResponseField>
+
+<ResponseField name="started_at" type="datetime">
+  Timestamp when the backtest started running (null if not started)
+</ResponseField>
+
+<ResponseField name="finished_at" type="datetime">
+  Timestamp when the backtest finished (null if not finished)
+</ResponseField>
+
+<ResponseField name="error" type="string">
+  Error message if state is `failed` (null otherwise)
+</ResponseField>
+
+<ResponseExample>
+```json 201 Created
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "state": "queued",
+  "progress": 0.0,
+  "created_at": "2023-01-15T10:30:00.000Z",
+  "started_at": null,
+  "finished_at": null,
+  "error": null
+}
+```
+</ResponseExample>
+
+---
+
+## List backtests
+
+<CodeGroup>
+```bash GET /backtests
+curl http://127.0.0.1:8000/backtests?state=completed&limit=10 \
+  -H "X-API-Key: your-api-key"
+```
+</CodeGroup>
+
+List backtest runs with optional filtering by state.
+
+### Query parameters
+
+<ParamField query="state" type="string">
+  Filter by backtest state
+  
+  Options: `queued`, `running`, `completed`, `failed`
+</ParamField>
+
+<ParamField query="limit" type="integer" default="50">
+  Maximum number of results to return (1-200)
+</ParamField>
+
+### Response
+
+Returns an array of backtest status objects (same schema as create backtest response).
+
+<ResponseExample>
+```json 200 OK
+[
+  {
+    "run_id": "550e8400-e29b-41d4-a716-446655440000",
+    "state": "completed",
+    "progress": 1.0,
+    "created_at": "2023-01-15T10:30:00.000Z",
+    "started_at": "2023-01-15T10:30:05.000Z",
+    "finished_at": "2023-01-15T10:32:00.000Z",
+    "error": null
+  },
+  {
+    "run_id": "660e8400-e29b-41d4-a716-446655440001",
+    "state": "running",
+    "progress": 0.45,
+    "created_at": "2023-01-15T11:00:00.000Z",
+    "started_at": "2023-01-15T11:00:02.000Z",
+    "finished_at": null,
+    "error": null
+  }
+]
+```
+</ResponseExample>
+
+---
+
+## Get backtest
+
+<CodeGroup>
+```bash GET /backtests/:run_id
+curl http://127.0.0.1:8000/backtests/550e8400-e29b-41d4-a716-446655440000 \
+  -H "X-API-Key: your-api-key"
+```
+</CodeGroup>
+
+Get the current status of a specific backtest run.
+
+### Path parameters
+
+<ParamField path="run_id" type="string" required>
+  Unique identifier of the backtest run
+</ParamField>
+
+### Response
+
+Returns a backtest status object (same schema as create backtest response).
+
+<ResponseExample>
+```json 200 OK
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "state": "running",
+  "progress": 0.67,
+  "created_at": "2023-01-15T10:30:00.000Z",
+  "started_at": "2023-01-15T10:30:05.000Z",
+  "finished_at": null,
+  "error": null
+}
+```
+
+```json 404 Not Found
+{
+  "detail": "Run not found"
+}
+```
+</ResponseExample>
+
+---
+
+## Get results
+
+<CodeGroup>
+```bash GET /backtests/:run_id/results
+curl http://127.0.0.1:8000/backtests/550e8400-e29b-41d4-a716-446655440000/results \
+  -H "X-API-Key: your-api-key"
+```
+</CodeGroup>
+
+Get the full results of a completed backtest, including metrics, equity curve, trades, and logs.
+
+### Path parameters
+
+<ParamField path="run_id" type="string" required>
+  Unique identifier of the backtest run
+</ParamField>
+
+### Response
+
+<ResponseField name="run_id" type="string">
+  Unique identifier for the backtest run
+</ResponseField>
+
+<ResponseField name="metrics_summary" type="object">
+  Key performance metrics as key-value pairs
+  
+  Common metrics:
+  - `total_return`: Total return percentage
+  - `sharpe_ratio`: Risk-adjusted return metric
+  - `max_drawdown`: Maximum peak-to-trough decline
+  - `win_rate`: Percentage of profitable trades
+  - `profit_factor`: Gross profit divided by gross loss
+</ResponseField>
+
+<ResponseField name="equity_curve" type="array">
+  Array of equity data points over time
+  
+  Each point contains:
+  - `timestamp`: Date/time of the data point
+  - `equity`: Portfolio value at that time
+  - `cash`: Cash balance
+  - `positions`: Total value of positions
+</ResponseField>
+
+<ResponseField name="trades" type="array">
+  Array of executed trades
+  
+  Each trade contains:
+  - `symbol`: Ticker symbol
+  - `timestamp`: Execution time
+  - `side`: `buy` or `sell`
+  - `quantity`: Number of shares/units
+  - `price`: Execution price
+  - `commission`: Commission paid
+</ResponseField>
+
+<ResponseField name="exposures" type="array">
+  Array of position exposure snapshots over time
+</ResponseField>
+
+<ResponseField name="logs" type="string[]">
+  Array of log messages from the backtest execution
+</ResponseField>
+
+<ResponseExample>
+```json 200 OK
+{
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "metrics_summary": {
+    "total_return": 15.2,
+    "sharpe_ratio": 1.45,
+    "max_drawdown": -8.3,
+    "win_rate": 62.5,
+    "profit_factor": 1.82,
+    "num_trades": 48
+  },
+  "equity_curve": [
+    {
+      "timestamp": "2023-01-01T00:00:00Z",
+      "equity": 1000000.0,
+      "cash": 1000000.0,
+      "positions": 0.0
+    },
+    {
+      "timestamp": "2023-01-02T00:00:00Z",
+      "equity": 1005000.0,
+      "cash": 500000.0,
+      "positions": 505000.0
+    }
+  ],
+  "trades": [
+    {
+      "symbol": "AAPL",
+      "timestamp": "2023-01-02T09:30:00Z",
+      "side": "buy",
+      "quantity": 1000,
+      "price": 150.25,
+      "commission": 37.56
+    }
+  ],
+  "exposures": [],
+  "logs": [
+    "Backtest started",
+    "Processing AAPL data",
+    "Backtest completed successfully"
+  ]
+}
+```
+
+```json 409 Conflict
+{
+  "detail": "Results not ready"
+}
+```
+</ResponseExample>
+
+---
+
+## Stream backtest
+
+<CodeGroup>
+```javascript WebSocket /backtests/:run_id/stream
+const ws = new WebSocket(
+  'ws://127.0.0.1:8000/backtests/550e8400-e29b-41d4-a716-446655440000/stream?api_key=your-api-key'
+);
+
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  console.log('Event:', message);
+};
+
+ws.onerror = (error) => {
+  console.error('WebSocket error:', error);
+};
+
+ws.onclose = () => {
+  console.log('WebSocket closed');
+};
+```
+</CodeGroup>
+
+Stream real-time events from a running backtest via WebSocket. Events include progress updates, log messages, metrics, and state changes.
+
+### Path parameters
+
+<ParamField path="run_id" type="string" required>
+  Unique identifier of the backtest run
+</ParamField>
+
+### Query parameters
+
+<ParamField query="api_key" type="string">
+  API key for WebSocket authentication (alternative to header-based auth)
+</ParamField>
+
+<ParamField query="last_event_id" type="integer">
+  Resume from events after this ID (for reconnection)
+</ParamField>
+
+### Authentication
+
+WebSocket connections support three authentication methods:
+
+1. Query parameter: `?api_key=your-api-key`
+2. Authorization header: `Authorization: Bearer your-api-key`
+3. Custom header: `X-API-Key: your-api-key`
+
+### Event types
+
+The WebSocket emits events with the following structure:
+
+<ResponseField name="event_id" type="integer">
+  Unique sequential ID for this event
+</ResponseField>
+
+<ResponseField name="run_id" type="string">
+  Backtest run identifier
+</ResponseField>
+
+<ResponseField name="type" type="string">
+  Event type
+  
+  Values: `log`, `progress`, `metric`, `state`
+</ResponseField>
+
+<ResponseField name="timestamp" type="datetime">
+  When the event occurred
+</ResponseField>
+
+<ResponseField name="payload" type="object">
+  Event-specific data
+  
+  - `log` events: `{"message": "..."}`
+  - `progress` events: `{"progress": 0.45}`
+  - `metric` events: `{"name": "sharpe_ratio", "value": 1.23}`
+  - `state` events: `{"state": "running", "previous_state": "queued"}`
+</ResponseField>
+
+<ResponseExample>
+```json Progress event
+{
+  "event_id": 42,
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "type": "progress",
+  "timestamp": "2023-01-15T10:31:00.000Z",
+  "payload": {
+    "progress": 0.45
+  }
+}
+```
+
+```json Log event
+{
+  "event_id": 43,
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "type": "log",
+  "timestamp": "2023-01-15T10:31:05.000Z",
+  "payload": {
+    "message": "Processing AAPL data"
+  }
+}
+```
+
+```json State event
+{
+  "event_id": 44,
+  "run_id": "550e8400-e29b-41d4-a716-446655440000",
+  "type": "state",
+  "timestamp": "2023-01-15T10:32:00.000Z",
+  "payload": {
+    "state": "completed",
+    "previous_state": "running"
+  }
+}
+```
+</ResponseExample>
+
+### Connection lifecycle
+
+1. Client connects with authentication credentials
+2. Server validates API key and checks if run exists
+3. Server sends any events after `last_event_id` (backlog replay)
+4. Server subscribes client to live events
+5. Client receives events as they occur
+6. Connection closes when:
+   - Client disconnects
+   - Authentication fails (policy violation)
+   - Run not found
+   - Server error
+
+### Error handling
+
+WebSocket connections close with specific codes:
+
+- `1008 Policy Violation` - Authentication failed or run not found
+- `1000 Normal Closure` - Clean disconnect

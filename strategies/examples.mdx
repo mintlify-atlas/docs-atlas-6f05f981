@@ -1,0 +1,966 @@
+---
+title: Custom strategy examples
+description: Real-world strategy implementations demonstrating different patterns and techniques
+---
+
+This page shows complete implementations of various trading strategies included in GlowBack, demonstrating different patterns and techniques.
+
+## Buy and hold strategy
+
+The simplest strategy: buy once and hold forever. Defined in `gb-types/src/strategy.rs:263`.
+
+```rust
+use gb_types::strategy::*;
+use gb_types::market::MarketEvent;
+use gb_types::orders::{Order, OrderEvent, Side};
+use rust_decimal::Decimal;
+
+#[derive(Debug, Clone)]
+pub struct BuyAndHoldStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    position_opened: bool,
+}
+
+impl BuyAndHoldStrategy {
+    pub fn new() -> Self {
+        Self {
+            config: StrategyConfig::new(
+                "buy_and_hold".to_string(),
+                "Buy and Hold".to_string()
+            ),
+            initialized: false,
+            position_opened: false,
+        }
+    }
+}
+
+impl Strategy for BuyAndHoldStrategy {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+        self.config = config.clone();
+        self.initialized = true;
+        Ok(())
+    }
+    
+    fn on_market_event(
+        &mut self,
+        event: &MarketEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        // Only buy once on first market event
+        if !self.initialized || self.position_opened {
+            return Ok(vec![]);
+        }
+        
+        if let Some(symbol) = self.config.symbols.first() {
+            if event.symbol() == symbol {
+                let available_cash = context.get_available_cash();
+                if let Some(price) = context.get_current_price(symbol) {
+                    // Use 95% of available cash
+                    let quantity = available_cash * Decimal::new(95, 2) / price;
+                    
+                    let order = Order::market_order(
+                        symbol.clone(),
+                        Side::Buy,
+                        quantity,
+                        self.config.strategy_id.clone()
+                    );
+                    
+                    self.position_opened = true;
+                    return Ok(vec![StrategyAction::PlaceOrder(order)]);
+                }
+            }
+        }
+        
+        Ok(vec![])
+    }
+    
+    fn on_order_event(
+        &mut self,
+        _event: &OrderEvent,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_day_end(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_stop(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn get_config(&self) -> &StrategyConfig {
+        &self.config
+    }
+    
+    fn get_metrics(&self) -> StrategyMetrics {
+        StrategyMetrics::new(self.config.strategy_id.clone())
+    }
+}
+```
+
+**Key techniques:**
+- Simple state tracking with boolean flags
+- One-time order placement on first market event
+- Position sizing based on available cash
+
+## Moving average crossover strategy
+
+Buys when short MA crosses above long MA, sells when it crosses below. Defined in `gb-types/src/strategy.rs:347`.
+
+```rust
+#[derive(Debug, Clone)]
+pub struct MovingAverageCrossoverStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    short_period: usize,
+    long_period: usize,
+    position_size: Decimal,
+    last_signal: Option<Signal>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Signal {
+    Buy,
+    Sell,
+}
+
+impl MovingAverageCrossoverStrategy {
+    pub fn new(short_period: usize, long_period: usize) -> Self {
+        let mut config = StrategyConfig::new(
+            "ma_crossover".to_string(),
+            "Moving Average Crossover".to_string()
+        );
+        config.set_parameter("short_period", short_period);
+        config.set_parameter("long_period", long_period);
+        config.set_parameter("position_size", 0.95f64);
+        
+        Self {
+            config,
+            initialized: false,
+            short_period,
+            long_period,
+            position_size: Decimal::new(95, 2),
+            last_signal: None,
+        }
+    }
+    
+    fn calculate_sma(&self, prices: &[Decimal], period: usize) -> Option<Decimal> {
+        if prices.len() < period {
+            return None;
+        }
+        
+        let sum: Decimal = prices.iter().rev().take(period).sum();
+        Some(sum / Decimal::from(period))
+    }
+    
+    fn get_recent_prices(
+        &self,
+        context: &StrategyContext,
+        symbol: &Symbol
+    ) -> Vec<Decimal> {
+        if let Some(buffer) = context.get_market_data(symbol) {
+            buffer.get_bars(self.long_period + 1)
+                .iter()
+                .map(|bar| bar.close)
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+impl Strategy for MovingAverageCrossoverStrategy {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+        self.config = config.clone();
+        self.short_period = config.get_parameter("short_period").unwrap_or(10);
+        self.long_period = config.get_parameter("long_period").unwrap_or(20);
+        self.position_size = config.get_parameter::<f64>("position_size")
+            .map(Decimal::from_f64_retain)
+            .flatten()
+            .unwrap_or(Decimal::new(95, 2));
+        self.initialized = true;
+        Ok(())
+    }
+    
+    fn on_market_event(
+        &mut self,
+        event: &MarketEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        if !self.initialized {
+            return Ok(vec![]);
+        }
+        
+        let symbol = event.symbol();
+        let prices = self.get_recent_prices(context, symbol);
+        
+        // Need enough data for long MA
+        if prices.len() < self.long_period {
+            return Ok(vec![]);
+        }
+        
+        let short_ma = self.calculate_sma(&prices, self.short_period);
+        let long_ma = self.calculate_sma(&prices, self.long_period);
+        
+        if let (Some(short), Some(long)) = (short_ma, long_ma) {
+            // Determine current signal
+            let current_signal = if short > long {
+                Some(Signal::Buy)
+            } else if short < long {
+                Some(Signal::Sell)
+            } else {
+                None
+            };
+            
+            // Only act on signal changes
+            if current_signal != self.last_signal {
+                let mut actions = Vec::new();
+                
+                match current_signal {
+                    Some(Signal::Buy) => {
+                        // Close short position if any
+                        if let Some(position) = context.get_position(symbol) {
+                            if position.quantity < Decimal::ZERO {
+                                let close_order = Order::market_order(
+                                    symbol.clone(),
+                                    Side::Buy,
+                                    position.quantity.abs(),
+                                    self.config.strategy_id.clone()
+                                );
+                                actions.push(StrategyAction::PlaceOrder(close_order));
+                            }
+                        }
+                        
+                        // Open long position
+                        let cash = context.get_available_cash();
+                        if let Some(price) = context.get_current_price(symbol) {
+                            let quantity = (cash * self.position_size) / price;
+                            if quantity > Decimal::ZERO {
+                                let order = Order::market_order(
+                                    symbol.clone(),
+                                    Side::Buy,
+                                    quantity,
+                                    self.config.strategy_id.clone()
+                                );
+                                actions.push(StrategyAction::PlaceOrder(order));
+                            }
+                        }
+                    },
+                    Some(Signal::Sell) => {
+                        // Close long position if any
+                        if let Some(position) = context.get_position(symbol) {
+                            if position.quantity > Decimal::ZERO {
+                                let order = Order::market_order(
+                                    symbol.clone(),
+                                    Side::Sell,
+                                    position.quantity,
+                                    self.config.strategy_id.clone()
+                                );
+                                actions.push(StrategyAction::PlaceOrder(order));
+                            }
+                        }
+                    },
+                    None => {},
+                }
+                
+                self.last_signal = current_signal;
+                return Ok(actions);
+            }
+        }
+        
+        Ok(vec![])
+    }
+    
+    fn on_order_event(
+        &mut self,
+        _event: &OrderEvent,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_day_end(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_stop(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn get_config(&self) -> &StrategyConfig {
+        &self.config
+    }
+    
+    fn get_metrics(&self) -> StrategyMetrics {
+        StrategyMetrics::new(self.config.strategy_id.clone())
+    }
+}
+```
+
+**Key techniques:**
+- Helper methods for calculations (`calculate_sma`)
+- Signal state tracking to avoid redundant trades
+- Closing opposite positions before opening new ones
+- Configurable parameters with defaults
+
+## Momentum strategy
+
+Buys when price momentum exceeds threshold, sells on negative momentum. Defined in `gb-types/src/strategy.rs:541`.
+
+```rust
+#[derive(Debug, Clone)]
+pub struct MomentumStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    lookback_period: usize,
+    momentum_threshold: Decimal,
+    position_size: Decimal,
+    rebalance_frequency: usize,
+    days_since_rebalance: usize,
+}
+
+impl MomentumStrategy {
+    pub fn new(lookback_period: usize, momentum_threshold: f64) -> Self {
+        let mut config = StrategyConfig::new(
+            "momentum".to_string(),
+            "Momentum Strategy".to_string()
+        );
+        config.set_parameter("lookback_period", lookback_period);
+        config.set_parameter("momentum_threshold", momentum_threshold);
+        config.set_parameter("position_size", 0.95f64);
+        config.set_parameter("rebalance_frequency", 5);
+        
+        Self {
+            config,
+            initialized: false,
+            lookback_period,
+            momentum_threshold: Decimal::from_f64_retain(momentum_threshold)
+                .unwrap_or(Decimal::new(5, 2)),
+            position_size: Decimal::new(95, 2),
+            rebalance_frequency: 5,
+            days_since_rebalance: 0,
+        }
+    }
+    
+    fn calculate_momentum(&self, prices: &[Decimal]) -> Option<Decimal> {
+        if prices.len() < self.lookback_period {
+            return None;
+        }
+        
+        let current_price = prices.last()?;
+        let past_price = prices.get(prices.len() - self.lookback_period)?;
+        
+        // Calculate percentage change
+        if *past_price != Decimal::ZERO {
+            Some((*current_price - *past_price) / *past_price * Decimal::from(100))
+        } else {
+            None
+        }
+    }
+}
+
+impl Strategy for MomentumStrategy {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+        self.config = config.clone();
+        self.lookback_period = config.get_parameter("lookback_period").unwrap_or(10);
+        self.momentum_threshold = config.get_parameter::<f64>("momentum_threshold")
+            .map(Decimal::from_f64_retain)
+            .flatten()
+            .unwrap_or(Decimal::new(5, 2));
+        self.rebalance_frequency = config.get_parameter("rebalance_frequency").unwrap_or(5);
+        self.initialized = true;
+        Ok(())
+    }
+    
+    fn on_market_event(
+        &mut self,
+        event: &MarketEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        if !self.initialized {
+            return Ok(vec![]);
+        }
+        
+        // Only trade on rebalance days
+        if self.days_since_rebalance < self.rebalance_frequency {
+            return Ok(vec![]);
+        }
+        
+        let symbol = event.symbol();
+        
+        if let Some(buffer) = context.get_market_data(symbol) {
+            let bars = buffer.get_bars(self.lookback_period + 1);
+            let prices: Vec<Decimal> = bars.iter().map(|b| b.close).collect();
+            
+            if let Some(momentum) = self.calculate_momentum(&prices) {
+                let mut actions = Vec::new();
+                let current_position = context.get_position(symbol);
+                
+                if momentum > self.momentum_threshold {
+                    // Strong positive momentum - go long
+                    let target_quantity = if let Some(price) = context.get_current_price(symbol) {
+                        (context.get_portfolio_value() * self.position_size) / price
+                    } else {
+                        Decimal::ZERO
+                    };
+                    
+                    let current_qty = current_position
+                        .map(|p| p.quantity)
+                        .unwrap_or(Decimal::ZERO);
+                    let qty_diff = target_quantity - current_qty;
+                    
+                    if qty_diff.abs() > Decimal::new(1, 4) {
+                        let side = if qty_diff > Decimal::ZERO {
+                            Side::Buy
+                        } else {
+                            Side::Sell
+                        };
+                        
+                        let order = Order::market_order(
+                            symbol.clone(),
+                            side,
+                            qty_diff.abs(),
+                            self.config.strategy_id.clone()
+                        );
+                        actions.push(StrategyAction::PlaceOrder(order));
+                    }
+                } else if momentum < -self.momentum_threshold {
+                    // Strong negative momentum - close positions
+                    if let Some(position) = current_position {
+                        if position.quantity > Decimal::ZERO {
+                            let order = Order::market_order(
+                                symbol.clone(),
+                                Side::Sell,
+                                position.quantity,
+                                self.config.strategy_id.clone()
+                            );
+                            actions.push(StrategyAction::PlaceOrder(order));
+                        }
+                    }
+                }
+                
+                self.days_since_rebalance = 0;
+                return Ok(actions);
+            }
+        }
+        
+        Ok(vec![])
+    }
+    
+    fn on_order_event(
+        &mut self,
+        _event: &OrderEvent,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_day_end(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        // Increment day counter for rebalancing
+        self.days_since_rebalance += 1;
+        Ok(vec![])
+    }
+    
+    fn on_stop(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn get_config(&self) -> &StrategyConfig {
+        &self.config
+    }
+    
+    fn get_metrics(&self) -> StrategyMetrics {
+        StrategyMetrics::new(self.config.strategy_id.clone())
+    }
+}
+```
+
+**Key techniques:**
+- Periodic rebalancing using `on_day_end`
+- Momentum calculation over configurable periods
+- Target position sizing vs. current position
+- Minimum trade size threshold to avoid tiny orders
+
+## Mean reversion strategy
+
+Buys when price falls below mean, sells when above mean. Uses z-scores. Defined in `gb-types/src/strategy.rs:701`.
+
+```rust
+#[derive(Debug, Clone)]
+pub struct MeanReversionStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    lookback_period: usize,
+    entry_threshold: Decimal,  // Z-score threshold for entry
+    exit_threshold: Decimal,   // Z-score threshold for exit
+    position_size: Decimal,
+    max_position_size: Decimal,
+}
+
+impl MeanReversionStrategy {
+    pub fn new(
+        lookback_period: usize,
+        entry_threshold: f64,
+        exit_threshold: f64
+    ) -> Self {
+        let mut config = StrategyConfig::new(
+            "mean_reversion".to_string(),
+            "Mean Reversion Strategy".to_string()
+        );
+        config.set_parameter("lookback_period", lookback_period);
+        config.set_parameter("entry_threshold", entry_threshold);
+        config.set_parameter("exit_threshold", exit_threshold);
+        config.set_parameter("position_size", 0.25f64);
+        config.set_parameter("max_position_size", 0.95f64);
+        
+        Self {
+            config,
+            initialized: false,
+            lookback_period,
+            entry_threshold: Decimal::from_f64_retain(entry_threshold)
+                .unwrap_or(Decimal::from(2)),
+            exit_threshold: Decimal::from_f64_retain(exit_threshold)
+                .unwrap_or(Decimal::from(1)),
+            position_size: Decimal::new(25, 2),
+            max_position_size: Decimal::new(95, 2),
+        }
+    }
+    
+    fn calculate_z_score(&self, prices: &[Decimal]) -> Option<Decimal> {
+        if prices.len() < self.lookback_period {
+            return None;
+        }
+        
+        let recent: Vec<Decimal> = prices.iter()
+            .rev()
+            .take(self.lookback_period)
+            .cloned()
+            .collect();
+        let current_price = *prices.last()?;
+        
+        // Calculate mean
+        let mean = recent.iter().sum::<Decimal>() / Decimal::from(recent.len());
+        
+        // Calculate standard deviation
+        let variance = recent.iter()
+            .map(|p| (*p - mean) * (*p - mean))
+            .sum::<Decimal>() / Decimal::from(recent.len());
+        
+        let std_dev = variance.to_f64()
+            .map(|v| v.sqrt())
+            .and_then(Decimal::from_f64)
+            .unwrap_or(Decimal::ZERO);
+        
+        if std_dev != Decimal::ZERO {
+            Some((current_price - mean) / std_dev)
+        } else {
+            None
+        }
+    }
+}
+
+impl Strategy for MeanReversionStrategy {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+        self.config = config.clone();
+        self.lookback_period = config.get_parameter("lookback_period").unwrap_or(20);
+        self.entry_threshold = config.get_parameter::<f64>("entry_threshold")
+            .map(Decimal::from_f64_retain)
+            .flatten()
+            .unwrap_or(Decimal::from(2));
+        self.exit_threshold = config.get_parameter::<f64>("exit_threshold")
+            .map(Decimal::from_f64_retain)
+            .flatten()
+            .unwrap_or(Decimal::from(1));
+        self.initialized = true;
+        Ok(())
+    }
+    
+    fn on_market_event(
+        &mut self,
+        event: &MarketEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        if !self.initialized {
+            return Ok(vec![]);
+        }
+        
+        let symbol = event.symbol();
+        
+        if let Some(buffer) = context.get_market_data(symbol) {
+            let bars = buffer.get_bars(self.lookback_period + 5);
+            let prices: Vec<Decimal> = bars.iter().map(|b| b.close).collect();
+            
+            if let Some(z_score) = self.calculate_z_score(&prices) {
+                let mut actions = Vec::new();
+                let current_qty = context.get_position(symbol)
+                    .map(|p| p.quantity)
+                    .unwrap_or(Decimal::ZERO);
+                
+                // Entry: price significantly below mean
+                if z_score < -self.entry_threshold {
+                    let cash = context.get_available_cash();
+                    if let Some(price) = context.get_current_price(symbol) {
+                        let max_qty = (context.get_portfolio_value() * self.max_position_size) / price;
+                        let increment = (context.get_portfolio_value() * self.position_size) / price;
+                        
+                        if current_qty < max_qty {
+                            let qty = (max_qty - current_qty).min(increment);
+                            if qty > Decimal::new(1, 4) && cash > qty * price {
+                                let order = Order::market_order(
+                                    symbol.clone(),
+                                    Side::Buy,
+                                    qty,
+                                    self.config.strategy_id.clone()
+                                );
+                                actions.push(StrategyAction::PlaceOrder(order));
+                            }
+                        }
+                    }
+                }
+                
+                // Exit: price moving back toward mean
+                if current_qty > Decimal::ZERO && z_score > -self.exit_threshold {
+                    let exit_qty = current_qty.min(
+                        (context.get_portfolio_value() * self.position_size) /
+                        context.get_current_price(symbol).unwrap_or(Decimal::ONE)
+                    );
+                    
+                    if exit_qty > Decimal::new(1, 4) {
+                        let order = Order::market_order(
+                            symbol.clone(),
+                            Side::Sell,
+                            exit_qty,
+                            self.config.strategy_id.clone()
+                        );
+                        actions.push(StrategyAction::PlaceOrder(order));
+                    }
+                }
+                
+                return Ok(actions);
+            }
+        }
+        
+        Ok(vec![])
+    }
+    
+    fn on_order_event(
+        &mut self,
+        _event: &OrderEvent,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_day_end(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_stop(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn get_config(&self) -> &StrategyConfig {
+        &self.config
+    }
+    
+    fn get_metrics(&self) -> StrategyMetrics {
+        StrategyMetrics::new(self.config.strategy_id.clone())
+    }
+}
+```
+
+**Key techniques:**
+- Statistical calculations (z-score, standard deviation)
+- Incremental position building up to a maximum
+- Separate entry and exit thresholds
+- Smaller position sizes for mean-reverting strategies
+
+## RSI strategy
+
+Buys when RSI indicates oversold, sells when overbought. Defined in `gb-types/src/strategy.rs:712`.
+
+```rust
+#[derive(Debug, Clone)]
+pub struct RsiStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    lookback_period: usize,
+    oversold_threshold: Decimal,
+    overbought_threshold: Decimal,
+    position_size: Decimal,
+}
+
+impl RsiStrategy {
+    pub fn new(
+        lookback_period: usize,
+        oversold_threshold: f64,
+        overbought_threshold: f64
+    ) -> Self {
+        let mut config = StrategyConfig::new(
+            "rsi".to_string(),
+            "RSI Strategy".to_string()
+        );
+        config.set_parameter("lookback_period", lookback_period);
+        config.set_parameter("oversold_threshold", oversold_threshold);
+        config.set_parameter("overbought_threshold", overbought_threshold);
+        config.set_parameter("position_size", 0.95f64);
+        
+        Self {
+            config,
+            initialized: false,
+            lookback_period,
+            oversold_threshold: Decimal::from_f64_retain(oversold_threshold)
+                .unwrap_or(Decimal::from(30)),
+            overbought_threshold: Decimal::from_f64_retain(overbought_threshold)
+                .unwrap_or(Decimal::from(70)),
+            position_size: Decimal::new(95, 2),
+        }
+    }
+    
+    fn calculate_rsi(&self, prices: &[Decimal]) -> Option<Decimal> {
+        if prices.len() < self.lookback_period + 1 {
+            return None;
+        }
+        
+        let mut gains = Decimal::ZERO;
+        let mut losses = Decimal::ZERO;
+        
+        let recent: Vec<Decimal> = prices.iter()
+            .rev()
+            .take(self.lookback_period + 1)
+            .cloned()
+            .collect();
+        let mut recent_iter = recent.into_iter().rev();
+        let mut previous = recent_iter.next()?;
+        
+        for price in recent_iter {
+            let change = price - previous;
+            if change > Decimal::ZERO {
+                gains += change;
+            } else if change < Decimal::ZERO {
+                losses += change.abs();
+            }
+            previous = price;
+        }
+        
+        let period = Decimal::from(self.lookback_period);
+        let avg_gain = gains / period;
+        let avg_loss = losses / period;
+        
+        if avg_loss == Decimal::ZERO {
+            return Some(Decimal::from(100));
+        }
+        if avg_gain == Decimal::ZERO {
+            return Some(Decimal::ZERO);
+        }
+        
+        let rs = avg_gain / avg_loss;
+        let rsi = Decimal::from(100) - (Decimal::from(100) / (Decimal::ONE + rs));
+        Some(rsi)
+    }
+}
+
+impl Strategy for RsiStrategy {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+        self.config = config.clone();
+        self.lookback_period = config.get_parameter("lookback_period").unwrap_or(14);
+        self.oversold_threshold = config.get_parameter::<f64>("oversold_threshold")
+            .map(Decimal::from_f64_retain)
+            .flatten()
+            .unwrap_or(Decimal::from(30));
+        self.overbought_threshold = config.get_parameter::<f64>("overbought_threshold")
+            .map(Decimal::from_f64_retain)
+            .flatten()
+            .unwrap_or(Decimal::from(70));
+        self.initialized = true;
+        Ok(())
+    }
+    
+    fn on_market_event(
+        &mut self,
+        event: &MarketEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        if !self.initialized {
+            return Ok(vec![]);
+        }
+        
+        let symbol = event.symbol();
+        if let Some(buffer) = context.get_market_data(symbol) {
+            let bars = buffer.get_bars(self.lookback_period + 1);
+            let prices: Vec<Decimal> = bars.iter().map(|b| b.close).collect();
+            
+            if let Some(rsi) = self.calculate_rsi(&prices) {
+                let mut actions = Vec::new();
+                let current_qty = context.get_position(symbol)
+                    .map(|p| p.quantity)
+                    .unwrap_or(Decimal::ZERO);
+                
+                if rsi < self.oversold_threshold {
+                    // Oversold - buy signal
+                    let target_qty = if let Some(price) = context.get_current_price(symbol) {
+                        (context.get_portfolio_value() * self.position_size) / price
+                    } else {
+                        Decimal::ZERO
+                    };
+                    
+                    let qty_diff = target_qty - current_qty;
+                    if qty_diff > Decimal::new(1, 4) {
+                        let order = Order::market_order(
+                            symbol.clone(),
+                            Side::Buy,
+                            qty_diff,
+                            self.config.strategy_id.clone()
+                        );
+                        actions.push(StrategyAction::PlaceOrder(order));
+                    }
+                } else if rsi > self.overbought_threshold {
+                    // Overbought - sell signal
+                    if current_qty > Decimal::ZERO {
+                        let order = Order::market_order(
+                            symbol.clone(),
+                            Side::Sell,
+                            current_qty,
+                            self.config.strategy_id.clone()
+                        );
+                        actions.push(StrategyAction::PlaceOrder(order));
+                    }
+                }
+                
+                return Ok(actions);
+            }
+        }
+        
+        Ok(vec![])
+    }
+    
+    fn on_order_event(
+        &mut self,
+        _event: &OrderEvent,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_day_end(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_stop(
+        &mut self,
+        _context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn get_config(&self) -> &StrategyConfig {
+        &self.config
+    }
+    
+    fn get_metrics(&self) -> StrategyMetrics {
+        StrategyMetrics::new(self.config.strategy_id.clone())
+    }
+}
+```
+
+**Key techniques:**
+- Complex indicator calculation (RSI)
+- Handling edge cases (zero division)
+- Directional signals (oversold vs. overbought)
+
+## Common patterns
+
+### Checking for sufficient data
+
+```rust
+let bars = buffer.get_bars(self.lookback_period);
+if bars.len() < self.lookback_period {
+    return Ok(vec![]); // Not enough data yet
+}
+```
+
+### Position sizing
+
+```rust
+// Fixed percentage of portfolio
+let target_value = context.get_portfolio_value() * Decimal::new(20, 2); // 20%
+let quantity = target_value / price;
+
+// Fixed percentage of cash
+let cash_to_use = context.get_available_cash() * Decimal::new(95, 2); // 95%
+let quantity = cash_to_use / price;
+```
+
+### Closing positions
+
+```rust
+if let Some(position) = context.get_position(symbol) {
+    if position.quantity > Decimal::ZERO {
+        // Close long position
+        let order = Order::market_order(
+            symbol.clone(),
+            Side::Sell,
+            position.quantity,
+            strategy_id
+        );
+    } else if position.quantity < Decimal::ZERO {
+        // Close short position
+        let order = Order::market_order(
+            symbol.clone(),
+            Side::Buy,
+            position.quantity.abs(),
+            strategy_id
+        );
+    }
+}
+```
+
+### Minimum trade size
+
+```rust
+let min_trade_size = Decimal::new(1, 4); // 0.0001
+if quantity.abs() > min_trade_size {
+    // Place order
+}
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Creating strategies" icon="hammer" href="/strategies/creating-strategies">
+    Step-by-step implementation guide
+  </Card>
+  <Card title="Strategy interface" icon="code" href="/strategies/strategy-interface">
+    Complete trait documentation
+  </Card>
+</CardGroup>

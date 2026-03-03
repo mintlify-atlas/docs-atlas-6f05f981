@@ -1,0 +1,219 @@
+---
+title: Python API overview
+description: Complete Python API reference for GlowBack's backtesting engine
+---
+
+## Introduction
+
+GlowBack provides high-performance Python bindings built with PyO3, enabling you to leverage Rust's speed and safety while writing backtesting strategies in Python. The API is designed to be intuitive for Python developers while maintaining the performance characteristics of the underlying Rust engine.
+
+## Installation
+
+Install GlowBack using pip:
+
+```bash
+pip install glowback
+```
+
+For development installations:
+
+```bash
+git clone https://github.com/yourorg/glowback.git
+cd glowback
+pip install -e .
+```
+
+## Quick start
+
+Here's a simple example to get started with GlowBack:
+
+```python
+from glowback import BacktestEngine, run_buy_and_hold
+
+# Run a simple buy-and-hold strategy
+result = run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day",
+    initial_capital=100000.0,
+    name="My First Backtest"
+)
+
+# Display results
+print(f"Total Return: {result.metrics_summary['total_return']:.2f}%")
+print(f"Sharpe Ratio: {result.metrics_summary['sharpe_ratio']:.2f}")
+print(f"Max Drawdown: {result.metrics_summary['max_drawdown']:.2f}%")
+
+# Plot equity curve
+result.plot_equity(show=True)
+```
+
+## Core classes
+
+The GlowBack Python API consists of the following main components:
+
+<CardGroup cols={2}>
+  <Card title="DataManager" icon="database" href="/api/python/data-manager">
+    Load and manage market data from multiple sources
+  </Card>
+  <Card title="BacktestEngine" icon="gauge" href="/api/python/backtest-engine">
+    Execute backtests with custom strategies
+  </Card>
+  <Card title="Strategy Classes" icon="code" href="/api/python/strategies">
+    Define and implement trading strategies
+  </Card>
+  <Card title="Data Types" icon="shapes" href="/api/python/overview">
+    Symbols, bars, and portfolio types
+  </Card>
+</CardGroup>
+
+## API conventions
+
+### Date formats
+
+All dates must be in RFC3339/ISO8601 format with timezone information:
+
+```python
+# Correct formats
+start_date = "2020-01-01T00:00:00Z"           # UTC
+start_date = "2020-01-01T00:00:00-05:00"      # EST
+start_date = "2020-01-01T00:00:00+00:00"      # UTC with offset
+
+# Incorrect formats (will raise ValueError)
+start_date = "2020-01-01"                      # Missing time and timezone
+start_date = "01/01/2020"                      # Wrong format
+```
+
+### Resolutions
+
+GlowBack supports the following time resolutions:
+
+- `"minute"` or `"1m"` - 1-minute bars
+- `"hour"` or `"1h"` - 1-hour bars
+- `"day"` or `"1d"` - Daily bars (default)
+
+```python
+engine = BacktestEngine(
+    symbols=["AAPL"],
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day"  # or "1d", "hour", "1h", "minute", "1m"
+)
+```
+
+### Asset classes
+
+When creating symbols, you can specify the asset class:
+
+- `"equity"` - Stocks (default)
+- `"crypto"` - Cryptocurrencies
+- `"forex"` - Foreign exchange
+- `"commodity"` - Commodities
+- `"bond"` - Bonds
+
+```python
+from glowback import Symbol
+
+# Create symbols with different asset classes
+aapl = Symbol("AAPL", "NASDAQ", "equity")
+btc = Symbol("BTC", "BINANCE", "crypto")
+eurusd = Symbol("EURUSD", "FOREX", "forex")
+```
+
+## Error handling
+
+GlowBack raises standard Python exceptions:
+
+```python
+from glowback import BacktestEngine
+
+try:
+    engine = BacktestEngine(
+        symbols=[],  # Empty list
+        start_date="2020-01-01T00:00:00Z",
+        end_date="2023-12-31T23:59:59Z"
+    )
+except ValueError as e:
+    print(f"Configuration error: {e}")
+    # Output: Configuration error: symbols list cannot be empty
+
+try:
+    engine = BacktestEngine(
+        symbols=["AAPL"],
+        start_date="invalid-date",
+        end_date="2023-12-31T23:59:59Z"
+    )
+except ValueError as e:
+    print(f"Date parsing error: {e}")
+    # Output: Date parsing error: Invalid start_date format: ...
+```
+
+## Working with results
+
+Backtest results provide multiple ways to access and visualize data:
+
+```python
+result = run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z"
+)
+
+# Access metrics as dictionary
+metrics = result.metrics_summary
+print(f"Total Return: {metrics['total_return']:.2f}%")
+
+# Get equity curve as list of dicts
+equity_data = result.equity_curve
+for point in equity_data[:5]:  # First 5 points
+    print(f"{point['timestamp']}: ${point['value']:.2f}")
+
+# Convert to pandas DataFrame (requires pandas)
+df = result.to_dataframe(index='timestamp')
+print(df.head())
+
+# Get metrics as DataFrame
+metrics_df = result.metrics_dataframe()
+print(metrics_df)
+```
+
+## Jupyter notebook integration
+
+GlowBack is designed to work seamlessly in Jupyter notebooks:
+
+```python
+import glowback
+
+# Results automatically display in notebooks
+result = glowback.run_buy_and_hold(
+    symbols=["AAPL", "MSFT"],
+    start_date="2020-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    initial_capital=100000.0
+)
+
+# Show summary with plot
+result.summary(plot=True)
+
+# Or just plot equity curve
+ax = result.plot_equity(show=False)
+ax.set_title("My Custom Title")
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Load market data" icon="download" href="/api/python/data-manager">
+    Learn how to load data from various sources
+  </Card>
+  <Card title="Run backtests" icon="rocket" href="/api/python/backtest-engine">
+    Execute backtests with the BacktestEngine
+  </Card>
+  <Card title="Custom strategies" icon="brain" href="/api/python/strategies">
+    Create your own trading strategies
+  </Card>
+  <Card title="API examples" icon="code" href="/guides/python-usage">
+    View complete working examples
+  </Card>
+</CardGroup>

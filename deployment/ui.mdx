@@ -1,0 +1,333 @@
+---
+title: UI setup
+description: Deploy and configure the GlowBack Streamlit interface
+---
+
+The GlowBack UI is a Streamlit-based web application that provides an interactive interface for backtesting, strategy development, and portfolio analysis.
+
+## Overview
+
+The Streamlit UI connects to the FastAPI gateway to provide:
+
+- Data loading and management
+- Strategy editor with code highlighting
+- Backtest execution and monitoring
+- Results dashboard with interactive charts
+- Portfolio analysis tools
+- Advanced analytics
+
+## Installation
+
+### Using Docker (recommended)
+
+The UI is included in the Docker Compose deployment:
+
+```bash
+docker-compose up ui
+```
+
+Access at: `http://localhost:8501`
+
+### Local development setup
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    cd ui
+    pip install -r requirements.txt
+    ```
+    
+    **Core dependencies**:
+    - `streamlit>=1.35.0` - Web framework
+    - `plotly>=5.17.0` - Interactive charts
+    - `pandas>=2.1.0` - Data manipulation
+    - `numpy>=1.24.0` - Numerical computing
+    - `streamlit-option-menu>=0.3.6` - Navigation menu
+    - `streamlit-ace>=0.1.1` - Code editor
+  </Step>
+
+  <Step title="Configure API connection">
+    Set the API gateway URL (defaults to `http://localhost:8000`):
+    
+    ```bash
+    export GLOWBACK_API_URL=http://localhost:8000
+    ```
+  </Step>
+
+  <Step title="Run the application">
+    ```bash
+    streamlit run app.py
+    ```
+    
+    Or with custom port:
+    
+    ```bash
+    streamlit run app.py --server.port=8501 --server.address=0.0.0.0
+    ```
+  </Step>
+</Steps>
+
+## Configuration
+
+### Environment variables
+
+**Docker deployment**:
+
+```yaml
+environment:
+  - GLOWBACK_API_URL=http://api:8000
+  - PYTHONDONTWRITEBYTECODE=1
+  - PYTHONUNBUFFERED=1
+```
+
+**Local development**:
+
+```bash
+export GLOWBACK_API_URL=http://localhost:8000
+```
+
+### Streamlit configuration
+
+Create `.streamlit/config.toml` in the `ui/` directory:
+
+```toml
+[server]
+port = 8501
+address = "0.0.0.0"
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#ff6b6b"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#1f1f1f"
+font = "sans serif"
+```
+
+### UI settings
+
+Configuration constants in `ui/config.py`:
+
+```python
+# UI Settings
+DEFAULT_PORT = 8501
+DEFAULT_THEME = "light"
+
+# Data Settings
+DEFAULT_INITIAL_CAPITAL = 100000
+DEFAULT_COMMISSION = 0.001
+DEFAULT_SLIPPAGE_BPS = 5
+MAX_DATA_POINTS = 10000
+
+# Chart Settings
+CHART_HEIGHT_MAIN = 800
+CHART_HEIGHT_SECONDARY = 400
+CHART_HEIGHT_SMALL = 300
+
+# Risk Settings
+DEFAULT_MAX_POSITION_SIZE = 0.95
+DEFAULT_KELLY_FRACTION = 0.25
+DEFAULT_VAR_CONFIDENCE_LEVELS = [0.95, 0.99, 0.999]
+```
+
+## Features
+
+### Navigation
+
+The UI provides six main sections:
+
+1. **Data Loader** - Upload and manage market data
+2. **Strategy Editor** - Write and configure trading strategies
+3. **Backtest Runner** - Execute backtests
+4. **Results Dashboard** - View performance metrics and charts
+5. **Portfolio Analyzer** - Analyze portfolio composition
+6. **Advanced Analytics** - Deep-dive analytics and metrics
+
+### Dark mode
+
+Toggle dark mode using the sidebar switch. Theme preference is persisted in session state.
+
+### Session state
+
+The UI maintains state across page navigation:
+
+- `data_loaded` - Whether market data is loaded
+- `strategy_config` - Current strategy configuration
+- `backtest_results` - Latest backtest results
+- `portfolio_data` - Portfolio analysis data
+- `saved_runs` - Saved backtest runs
+- `dark_mode` - Theme preference
+
+## Customization
+
+### Custom color scheme
+
+Edit the `COLORS` dictionary in `ui/config.py`:
+
+```python
+COLORS = {
+    "primary": "#ff6b6b",
+    "secondary": "#4ecdc4", 
+    "success": "#28a745",
+    "warning": "#ffc107",
+    "danger": "#dc3545",
+    "info": "#17a2b8"
+}
+```
+
+### Custom logo
+
+Replace the placeholder logo in `ui/app.py:94`:
+
+```python
+st.image("path/to/your/logo.png", width=150)
+```
+
+### Page customization
+
+Modify individual pages in the `ui/pages/` directory:
+
+- `data_loader.py` - Data management interface
+- `strategy_editor.py` - Strategy code editor
+- `backtest_runner.py` - Backtest execution
+- `results_dashboard.py` - Results visualization
+- `portfolio_analyzer.py` - Portfolio metrics
+- `advanced_analytics.py` - Advanced analysis tools
+
+## Command-line options
+
+### Server configuration
+
+```bash
+streamlit run app.py \
+  --server.port 8501 \
+  --server.address 0.0.0.0 \
+  --server.headless true
+```
+
+### Browser settings
+
+```bash
+streamlit run app.py \
+  --browser.gatherUsageStats false \
+  --browser.serverAddress localhost
+```
+
+### Development mode
+
+```bash
+streamlit run app.py \
+  --server.runOnSave true \
+  --server.fileWatcherType auto
+```
+
+## Production deployment
+
+### Using Docker
+
+**Dockerfile**: `docker/ui.Dockerfile`
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY ui/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY ui /app
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+```
+
+### Reverse proxy setup
+
+Nginx configuration for production:
+
+```nginx
+server {
+    listen 80;
+    server_name glowback.example.com;
+
+    location / {
+        proxy_pass http://localhost:8501;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+}
+```
+
+### Security considerations
+
+<Warning>
+  Streamlit does not provide built-in authentication. For production deployments, use a reverse proxy with authentication or deploy behind a VPN.
+</Warning>
+
+Options for securing the UI:
+
+1. **Reverse proxy authentication** (e.g., Nginx Basic Auth)
+2. **VPN access only**
+3. **Cloud provider authentication** (e.g., AWS Cognito, Google IAP)
+4. **Custom authentication middleware**
+
+## Troubleshooting
+
+### Cannot connect to API
+
+```bash
+# Verify API is running
+curl http://localhost:8000/healthz
+
+# Check environment variable
+echo $GLOWBACK_API_URL
+```
+
+### Port already in use
+
+```bash
+# Find process using port 8501
+lsof -i :8501
+
+# Kill the process or use a different port
+streamlit run app.py --server.port 8502
+```
+
+### Module import errors
+
+```bash
+# Reinstall dependencies
+cd ui
+pip install --force-reinstall -r requirements.txt
+```
+
+### Performance issues
+
+- Reduce `MAX_DATA_POINTS` in `ui/config.py`
+- Decrease chart heights for faster rendering
+- Disable auto-refresh for large datasets
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Docker deployment" icon="docker" href="/deployment/docker">
+    Deploy with Docker Compose
+  </Card>
+  <Card title="API gateway" icon="server" href="/deployment/api">
+    Configure the FastAPI gateway
+  </Card>
+</CardGroup>

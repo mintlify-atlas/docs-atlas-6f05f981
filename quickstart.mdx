@@ -1,80 +1,299 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Run your first backtest in under 5 minutes
 ---
 
-## Get started in three steps
+This guide will get you running your first backtest with GlowBack in minutes using Python.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, make sure you have:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+- Python 3.8 or higher
+- Rust stable toolchain (for building from source)
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+If you haven't installed GlowBack yet, see the [installation guide](/installation).
 </Note>
+
+## Your first backtest
+
+Let's run a simple buy-and-hold backtest using the Python API.
+
+<Steps>
+
+<Step title="Import GlowBack">
+
+Start by importing the GlowBack Python module:
+
+```python
+import glowback
+from datetime import datetime
+```
+
+</Step>
+
+<Step title="Create a data manager">
+
+The data manager loads and caches market data:
+
+```python
+# Initialize data manager
+manager = glowback.PyDataManager()
+
+# Add sample data provider (includes AAPL, MSFT, BTC-USD)
+manager.add_sample_provider()
+```
+
+<Note>
+The sample provider includes pre-loaded data for common symbols. You can also add CSV or API providers.
+</Note>
+
+</Step>
+
+<Step title="Load market data">
+
+Load historical price data for your symbol:
+
+```python
+# Create symbol
+symbol = glowback.PySymbol("AAPL", "NASDAQ", "equity")
+
+# Load daily bars for 2023
+bars = manager.load_data(
+    symbol,
+    "2023-01-01T00:00:00Z",
+    "2023-12-31T23:59:59Z",
+    "day"
+)
+
+print(f"Loaded {len(bars)} bars")
+```
+
+</Step>
+
+<Step title="Run a buy-and-hold backtest">
+
+The simplest way to run a backtest is using the built-in convenience function:
+
+```python
+# Run buy-and-hold strategy
+result = glowback.run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2023-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day",
+    initial_capital=100000.0,  # $100k starting capital
+    name="AAPL Buy & Hold"
+)
+```
+
+</Step>
+
+<Step title="Analyze the results">
+
+GlowBack automatically calculates performance metrics:
+
+```python
+# Access performance metrics
+print(f"Total Return: {result.total_return:.2%}")
+print(f"Sharpe Ratio: {result.sharpe_ratio:.2f}")
+print(f"Max Drawdown: {result.max_drawdown:.2%}")
+print(f"Number of Trades: {result.num_trades}")
+
+# View final portfolio value
+print(f"Final Value: ${result.final_value:,.2f}")
+print(f"Profit/Loss: ${result.total_pnl:,.2f}")
+```
+
+</Step>
+
+</Steps>
+
+## Complete example
+
+Here's the full code in one place:
+
+```python
+import glowback
+
+# Initialize and configure data manager
+manager = glowback.PyDataManager()
+manager.add_sample_provider()
+
+# Run buy-and-hold backtest
+result = glowback.run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2023-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day",
+    initial_capital=100000.0,
+    name="AAPL Buy & Hold"
+)
+
+# Print results
+print(f"\nBacktest Results: {result.name}")
+print(f"{'='*50}")
+print(f"Total Return: {result.total_return:.2%}")
+print(f"Sharpe Ratio: {result.sharpe_ratio:.2f}")
+print(f"Sortino Ratio: {result.sortino_ratio:.2f}")
+print(f"Max Drawdown: {result.max_drawdown:.2%}")
+print(f"CAGR: {result.cagr:.2%}")
+print(f"\nFinal Value: ${result.final_value:,.2f}")
+print(f"Total Trades: {result.num_trades}")
+```
+
+## Using custom data sources
+
+You can load data from CSV files or market data APIs:
+
+### CSV data
+
+```python
+manager = glowback.PyDataManager()
+
+# Add CSV provider (expects files in /path/to/data/)
+manager.add_csv_provider("/path/to/data")
+
+# CSV files should be named: SYMBOL_EXCHANGE.csv
+# Example: AAPL_NASDAQ.csv
+```
+
+CSV format:
+
+```csv
+timestamp,open,high,low,close,volume
+2023-01-01T00:00:00Z,150.00,152.50,149.50,151.00,10000000
+2023-01-02T00:00:00Z,151.00,153.00,150.50,152.50,12000000
+```
+
+### Alpha Vantage API
+
+```python
+manager = glowback.PyDataManager()
+
+# Add Alpha Vantage provider
+manager.add_alpha_vantage_provider("your_api_key_here")
+
+# Load data (will fetch from API if not cached)
+bars = manager.load_data(
+    symbol,
+    "2023-01-01T00:00:00Z",
+    "2023-12-31T23:59:59Z",
+    "day"
+)
+```
+
+<Warning>
+API calls may be rate-limited. Data is automatically cached in Parquet format for faster subsequent loads.
+</Warning>
+
+## Using the Streamlit UI
+
+For interactive strategy development, launch the Streamlit UI:
+
+```bash
+cd ui
+python setup.py
+```
+
+The UI will open at `http://localhost:8501` with a guided workflow:
+
+1. **Data Loader**: Load data from CSV, APIs, or sample datasets
+2. **Strategy Editor**: Edit strategy code with syntax highlighting
+3. **Backtest Runner**: Configure and run backtests
+4. **Results Dashboard**: View performance metrics and charts
+
+## Running with Docker
+
+Launch all services with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+Services:
+- **UI**: `http://localhost:8501` - Streamlit interface
+- **API**: `http://localhost:8000` - FastAPI gateway
+- **Engine**: `http://localhost:8081` - Rust engine service
+
+<Note>
+Set `GLOWBACK_API_KEY` environment variable to require authentication:
+
+```bash
+GLOWBACK_API_KEY=your-secret-key docker compose up
+```
+</Note>
+
+## Advanced backtesting
+
+For more control, use the backtest engine directly:
+
+```python
+import glowback
+
+# Create backtest engine
+engine = glowback.PyBacktestEngine(
+    symbols=["AAPL", "MSFT"],  # Multi-symbol backtest
+    start_date="2023-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day",
+    initial_capital=100000.0,
+    name="Tech Portfolio"
+)
+
+# Run with a specific strategy
+result = engine.run_buy_and_hold()
+
+# Access detailed results
+for trade in result.trades:
+    print(f"{trade.timestamp}: {trade.side} {trade.quantity} @ ${trade.price}")
+```
+
+## Multi-asset backtesting
+
+GlowBack supports equities and crypto with appropriate market hours and fees:
+
+```python
+import glowback
+
+# Mix equities and crypto
+aapl = glowback.PySymbol("AAPL", "NASDAQ", "equity")
+btc = glowback.PySymbol("BTC", "USD", "crypto")
+
+manager = glowback.PyDataManager()
+manager.add_sample_provider()
+
+# Equities: market hours apply, integer shares
+equity_bars = manager.load_data(
+    aapl,
+    "2023-01-01T00:00:00Z",
+    "2023-12-31T23:59:59Z",
+    "day"
+)
+
+# Crypto: 24/7 trading, fractional quantities
+crypto_bars = manager.load_data(
+    btc,
+    "2023-01-01T00:00:00Z",
+    "2023-12-31T23:59:59Z",
+    "day"
+)
+```
+
+## What's next?
+
+<CardGroup cols={2}>
+  <Card title="Core concepts" icon="book" href="/concepts/architecture">
+    Learn about event-driven backtesting architecture
+  </Card>
+  <Card title="Strategy development" icon="code" href="/guides/strategy-development">
+    Create custom trading strategies in Rust or Python
+  </Card>
+  <Card title="Data management" icon="database" href="/guides/data-sources">
+    Work with data providers, storage, and caching
+  </Card>
+  <Card title="API reference" icon="terminal" href="/api/python/overview">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>

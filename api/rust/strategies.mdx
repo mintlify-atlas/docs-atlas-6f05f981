@@ -1,0 +1,494 @@
+---
+title: 'Strategy trait and context'
+description: 'Strategy implementation framework and built-in strategies'
+---
+
+## Strategy trait
+
+Main strategy trait that all strategies must implement.
+
+```rust
+pub trait Strategy: Send + Sync {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String>;
+    
+    fn on_market_event(
+        &mut self,
+        event: &MarketEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String>;
+    
+    fn on_order_event(
+        &mut self,
+        event: &OrderEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String>;
+    
+    fn on_day_end(
+        &mut self,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String>;
+    
+    fn on_stop(
+        &mut self, 
+        context: &StrategyContext
+    ) -> Result<Vec<StrategyAction>, String>;
+    
+    fn get_config(&self) -> &StrategyConfig;
+    fn get_metrics(&self) -> StrategyMetrics;
+}
+```
+
+**Lifecycle:**
+
+1. **initialize()** - Called once before backtest starts
+2. **on_market_event()** - Called for each market data event
+3. **on_order_event()** - Called when orders are filled/cancelled
+4. **on_day_end()** - Called at end of each trading day
+5. **on_stop()** - Called once when backtest completes
+
+**Example implementation:**
+
+```rust
+use gb_types::*;
+
+struct MyStrategy {
+    config: StrategyConfig,
+    position_opened: bool,
+}
+
+impl Strategy for MyStrategy {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+        self.config = config.clone();
+        Ok(())
+    }
+    
+    fn on_market_event(
+        &mut self,
+        event: &MarketEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        let mut actions = Vec::new();
+        
+        // Example: Buy on first bar
+        if !self.position_opened {
+            if let MarketEvent::Bar(bar) = event {
+                let order = Order::market_order(
+                    bar.symbol.clone(),
+                    Side::Buy,
+                    Decimal::from(10),
+                    self.config.strategy_id.clone()
+                );
+                actions.push(StrategyAction::PlaceOrder(order));
+                self.position_opened = true;
+            }
+        }
+        
+        Ok(actions)
+    }
+    
+    fn on_order_event(
+        &mut self,
+        event: &OrderEvent,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_day_end(
+        &mut self,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn on_stop(
+        &mut self,
+        context: &StrategyContext,
+    ) -> Result<Vec<StrategyAction>, String> {
+        Ok(vec![])
+    }
+    
+    fn get_config(&self) -> &StrategyConfig {
+        &self.config
+    }
+    
+    fn get_metrics(&self) -> StrategyMetrics {
+        StrategyMetrics::new(self.config.strategy_id.clone())
+    }
+}
+```
+
+## StrategyContext
+
+Strategy context provides access to market data, portfolio, and order management.
+
+```rust
+pub struct StrategyContext {
+    pub current_time: DateTime<Utc>,
+    pub portfolio: Portfolio,
+    pub market_data: HashMap<Symbol, MarketDataBuffer>,
+    pub pending_orders: Vec<Order>,
+    pub strategy_id: String,
+}
+```
+
+<ParamField path="current_time" type="DateTime<Utc>">
+  Current backtest time
+</ParamField>
+
+<ParamField path="portfolio" type="Portfolio">
+  Current portfolio state
+</ParamField>
+
+<ParamField path="market_data" type="HashMap<Symbol, MarketDataBuffer>">
+  Market data buffers for each symbol
+</ParamField>
+
+<ParamField path="pending_orders" type="Vec<Order>">
+  Currently pending orders
+</ParamField>
+
+**Methods:**
+
+```rust
+impl StrategyContext {
+    pub fn new(strategy_id: String, initial_capital: Decimal) -> Self
+    pub fn get_position(&self, symbol: &Symbol) -> Option<&Position>
+    pub fn get_current_price(&self, symbol: &Symbol) -> Option<Decimal>
+    pub fn get_market_data(&self, symbol: &Symbol) -> Option<&MarketDataBuffer>
+    pub fn get_available_cash(&self) -> Decimal
+    pub fn get_portfolio_value(&self) -> Decimal
+}
+```
+
+**Usage in strategy:**
+
+```rust
+fn on_market_event(
+    &mut self,
+    event: &MarketEvent,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String> {
+    let symbol = event.symbol();
+    
+    // Get current position
+    let position = context.get_position(symbol);
+    
+    // Get current price
+    let price = context.get_current_price(symbol).unwrap();
+    
+    // Get market data buffer
+    let buffer = context.get_market_data(symbol).unwrap();
+    let bars = buffer.get_bars(20);  // Get last 20 bars
+    
+    // Check available cash
+    let cash = context.get_available_cash();
+    
+    Ok(vec![])
+}
+```
+
+## MarketDataBuffer
+
+Buffer for market data with rolling window.
+
+```rust
+pub struct MarketDataBuffer {
+    pub symbol: Symbol,
+    pub data: Vec<MarketEvent>,
+    pub max_size: usize,
+}
+```
+
+**Methods:**
+
+```rust
+impl MarketDataBuffer {
+    pub fn new(symbol: Symbol, max_size: usize) -> Self
+    pub fn add_event(&mut self, event: MarketEvent)
+    pub fn get_current_price(&self) -> Option<Decimal>
+    pub fn get_latest_bar(&self) -> Option<&Bar>
+    pub fn get_bars(&self, count: usize) -> Vec<&Bar>
+}
+```
+
+## StrategyAction
+
+Action that a strategy can take.
+
+```rust
+pub enum StrategyAction {
+    PlaceOrder(Order),
+    CancelOrder { order_id: OrderId },
+    Log { level: LogLevel, message: String },
+    SetParameter { key: String, value: serde_json::Value },
+}
+```
+
+**Example:**
+
+```rust
+let actions = vec![
+    StrategyAction::PlaceOrder(order),
+    StrategyAction::Log {
+        level: LogLevel::Info,
+        message: "Placed buy order".to_string(),
+    },
+];
+```
+
+## StrategyConfig
+
+Strategy configuration parameters.
+
+```rust
+pub struct StrategyConfig {
+    pub strategy_id: String,
+    pub name: String,
+    pub description: String,
+    pub parameters: HashMap<String, serde_json::Value>,
+    pub symbols: Vec<Symbol>,
+    pub initial_capital: Decimal,
+    pub risk_limits: RiskLimits,
+    pub enabled: bool,
+}
+```
+
+**Methods:**
+
+```rust
+impl StrategyConfig {
+    pub fn new(strategy_id: String, name: String) -> Self
+    pub fn add_symbol(&mut self, symbol: Symbol) -> &mut Self
+    pub fn set_parameter<T: Serialize>(&mut self, key: &str, value: T) -> &mut Self
+    pub fn get_parameter<T>(&self, key: &str) -> Option<T>
+    where
+        T: for<'de> Deserialize<'de>,
+}
+```
+
+**Example:**
+
+```rust
+let mut config = StrategyConfig::new(
+    "my_strategy".to_string(),
+    "My Strategy".to_string()
+);
+
+config
+    .add_symbol(Symbol::equity("AAPL"))
+    .set_parameter("lookback_period", 20)
+    .set_parameter("threshold", 0.05);
+
+// Later, in strategy:
+let lookback: usize = config.get_parameter("lookback_period").unwrap_or(10);
+```
+
+## Built-in strategies
+
+### BuyAndHoldStrategy
+
+Simple buy and hold strategy for testing.
+
+```rust
+pub struct BuyAndHoldStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    position_opened: bool,
+}
+```
+
+**Methods:**
+
+```rust
+impl BuyAndHoldStrategy {
+    pub fn new() -> Self
+}
+```
+
+**Example:**
+
+```rust
+let strategy = Box::new(BuyAndHoldStrategy::new());
+let result = engine.run_with_strategy(strategy).await?;
+```
+
+### MovingAverageCrossoverStrategy
+
+Moving average crossover strategy.
+
+```rust
+pub struct MovingAverageCrossoverStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    short_period: usize,
+    long_period: usize,
+    position_size: Decimal,
+    last_signal: Option<Signal>,
+}
+```
+
+**Methods:**
+
+```rust
+impl MovingAverageCrossoverStrategy {
+    pub fn new(short_period: usize, long_period: usize) -> Self
+}
+```
+
+**Example:**
+
+```rust
+// 10-day / 20-day MA crossover
+let strategy = Box::new(MovingAverageCrossoverStrategy::new(10, 20));
+let result = engine.run_with_strategy(strategy).await?;
+```
+
+**Logic:**
+- Buys when short MA crosses above long MA
+- Sells when short MA crosses below long MA
+- Uses 95% of available capital
+
+### MomentumStrategy
+
+Momentum strategy based on price momentum.
+
+```rust
+pub struct MomentumStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    lookback_period: usize,
+    momentum_threshold: Decimal,
+    position_size: Decimal,
+    rebalance_frequency: usize,
+    days_since_rebalance: usize,
+}
+```
+
+**Methods:**
+
+```rust
+impl MomentumStrategy {
+    pub fn new(lookback_period: usize, momentum_threshold: f64) -> Self
+}
+```
+
+**Example:**
+
+```rust
+// 5-day lookback, 5% threshold
+let strategy = Box::new(MomentumStrategy::new(5, 0.05));
+let result = engine.run_with_strategy(strategy).await?;
+```
+
+**Logic:**
+- Buys when momentum > threshold (strong positive momentum)
+- Sells when momentum < -threshold (strong negative momentum)
+- Rebalances every N days (default: 5)
+
+### MeanReversionStrategy
+
+Mean reversion strategy using z-scores.
+
+```rust
+pub struct MeanReversionStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    lookback_period: usize,
+    entry_threshold: Decimal,
+    exit_threshold: Decimal,
+    position_size: Decimal,
+    max_position_size: Decimal,
+}
+```
+
+**Methods:**
+
+```rust
+impl MeanReversionStrategy {
+    pub fn new(lookback_period: usize, entry_threshold: f64, exit_threshold: f64) -> Self
+}
+```
+
+**Example:**
+
+```rust
+// 20-day lookback, 2.0 entry, 1.0 exit
+let strategy = Box::new(MeanReversionStrategy::new(20, 2.0, 1.0));
+let result = engine.run_with_strategy(strategy).await?;
+```
+
+**Logic:**
+- Buys when price is 2+ standard deviations below mean
+- Sells when price is 2+ standard deviations above mean
+- Exits positions when price returns toward mean
+- Scales into positions (25% increments)
+
+### RsiStrategy
+
+RSI (Relative Strength Index) strategy.
+
+```rust
+pub struct RsiStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    lookback_period: usize,
+    oversold_threshold: Decimal,
+    overbought_threshold: Decimal,
+    position_size: Decimal,
+}
+```
+
+**Methods:**
+
+```rust
+impl RsiStrategy {
+    pub fn new(lookback_period: usize, oversold_threshold: f64, overbought_threshold: f64) -> Self
+}
+```
+
+**Example:**
+
+```rust
+// 14-day RSI, 30/70 thresholds
+let strategy = Box::new(RsiStrategy::new(14, 30.0, 70.0));
+let result = engine.run_with_strategy(strategy).await?;
+```
+
+**Logic:**
+- Buys when RSI < oversold threshold (default: 30)
+- Sells when RSI > overbought threshold (default: 70)
+- Uses 95% of capital
+
+## StrategyMetrics
+
+Strategy performance metrics.
+
+```rust
+pub struct StrategyMetrics {
+    pub strategy_id: String,
+    pub start_time: DateTime<Utc>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub total_return: Decimal,
+    pub annualized_return: Decimal,
+    pub volatility: Decimal,
+    pub sharpe_ratio: Option<Decimal>,
+    pub max_drawdown: Decimal,
+    pub total_trades: u64,
+    pub winning_trades: u64,
+    pub losing_trades: u64,
+    pub win_rate: Decimal,
+    pub average_win: Decimal,
+    pub average_loss: Decimal,
+    pub profit_factor: Decimal,
+    pub total_commissions: Decimal,
+}
+```
+
+**Methods:**
+
+```rust
+impl StrategyMetrics {
+    pub fn new(strategy_id: String) -> Self
+}
+```

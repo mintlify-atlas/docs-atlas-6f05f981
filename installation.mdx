@@ -1,0 +1,568 @@
+---
+title: Installation
+description: Install GlowBack for Rust or Python development
+---
+
+GlowBack can be used as a Rust library or via Python bindings. Choose the installation method that fits your workflow.
+
+## System requirements
+
+- **Rust**: Latest stable toolchain (1.70+)
+- **Python**: 3.8 or higher (for Python bindings)
+- **Operating systems**: Linux, macOS, Windows
+
+## Rust installation
+
+Use GlowBack as a Rust library in your Cargo project.
+
+<Steps>
+
+<Step title="Install Rust toolchain">
+
+If you don't have Rust installed:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Verify installation:
+
+```bash
+rustc --version
+cargo --version
+```
+
+</Step>
+
+<Step title="Clone the repository">
+
+```bash
+git clone https://github.com/LatencyTDH/GlowBack.git
+cd GlowBack
+```
+
+</Step>
+
+<Step title="Build the workspace">
+
+Build all crates:
+
+```bash
+cargo build --workspace --release
+```
+
+This compiles all core crates:
+- `gb-types` - Core types, orders, portfolio, strategies
+- `gb-data` - Data ingestion and storage
+- `gb-engine` - Backtesting engine
+- `gb-python` - Python bindings
+- `gb-risk` - Risk analytics
+- `gb-optimizer` - Parameter optimization
+
+</Step>
+
+<Step title="Run tests">
+
+Verify the installation:
+
+```bash
+cargo test --workspace
+```
+
+You should see all tests passing:
+
+```bash
+test result: ok. 56 passed; 0 failed
+```
+
+</Step>
+
+</Steps>
+
+### Using GlowBack crates
+
+Add GlowBack crates to your `Cargo.toml`:
+
+```toml
+[dependencies]
+gb-types = { path = "path/to/GlowBack/crates/gb-types" }
+gb-data = { path = "path/to/GlowBack/crates/gb-data" }
+gb-engine = { path = "path/to/GlowBack/crates/gb-engine" }
+```
+
+Basic usage example:
+
+```rust
+use gb_types::{Symbol, Resolution, BacktestConfig};
+use gb_data::DataManager;
+use gb_engine::BacktestEngine;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Create symbol
+    let symbol = Symbol::equity("AAPL");
+    
+    // Initialize data manager
+    let mut data_manager = DataManager::new().await?;
+    
+    // Add sample data provider
+    data_manager.add_provider(Box::new(
+        gb_data::SampleDataProvider::new()
+    ));
+    
+    // Load data
+    let bars = data_manager.load_data(
+        &symbol,
+        start_date,
+        end_date,
+        Resolution::Day
+    ).await?;
+    
+    println!("Loaded {} bars", bars.len());
+    Ok(())
+}
+```
+
+## Python installation
+
+Install the Python bindings to use GlowBack from Python.
+
+<Steps>
+
+<Step title="Install Python dependencies">
+
+GlowBack requires Python 3.8 or higher. Verify your version:
+
+```bash
+python --version
+```
+
+If you need to upgrade, use your system's package manager or download from [python.org](https://www.python.org/downloads/).
+
+</Step>
+
+<Step title="Install Rust (required for building)">
+
+The Python bindings require Rust to build. If you haven't installed it:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
+
+</Step>
+
+<Step title="Clone and build Python bindings">
+
+```bash
+git clone https://github.com/LatencyTDH/GlowBack.git
+cd GlowBack
+
+# Build Python bindings with maturin
+pip install maturin
+maturin develop --release -m crates/gb-python/Cargo.toml
+```
+
+<Note>
+`maturin develop` builds and installs the package in development mode, making it available to import as `glowback`.
+</Note>
+
+</Step>
+
+<Step title="Verify installation">
+
+Test the Python bindings:
+
+```python
+import glowback
+
+print(f"GlowBack version: {glowback.__version__}")
+
+# Test basic functionality
+manager = glowback.PyDataManager()
+manager.add_sample_provider()
+print("Installation successful!")
+```
+
+</Step>
+
+</Steps>
+
+### Alternative: Using pip (when published)
+
+<Warning>
+GlowBack is not yet published to PyPI. Use the build-from-source method above.
+</Warning>
+
+When available, you'll be able to install via pip:
+
+```bash
+pip install glowback
+```
+
+## Docker installation
+
+Run GlowBack services with Docker for a zero-configuration setup.
+
+<Steps>
+
+<Step title="Install Docker">
+
+Install Docker and Docker Compose:
+
+- **Linux**: Follow [Docker's official guide](https://docs.docker.com/engine/install/)
+- **macOS/Windows**: Install [Docker Desktop](https://www.docker.com/products/docker-desktop)
+
+Verify installation:
+
+```bash
+docker --version
+docker compose version
+```
+
+</Step>
+
+<Step title="Clone the repository">
+
+```bash
+git clone https://github.com/LatencyTDH/GlowBack.git
+cd GlowBack
+```
+
+</Step>
+
+<Step title="Launch with Docker Compose">
+
+Build and start all services:
+
+```bash
+docker compose up --build
+```
+
+This starts three services:
+- **Engine**: Rust backtesting engine on port 8081
+- **API**: FastAPI gateway on port 8000
+- **UI**: Streamlit interface on port 8501
+
+</Step>
+
+<Step title="Access the services">
+
+Once running, access:
+
+- **UI**: Open [http://localhost:8501](http://localhost:8501) in your browser
+- **API**: [http://localhost:8000/docs](http://localhost:8000/docs) for Swagger documentation
+- **Engine**: [http://localhost:8081/health](http://localhost:8081/health) for health check
+
+</Step>
+
+</Steps>
+
+### Docker configuration
+
+Customize behavior with environment variables:
+
+```bash
+# Require API authentication
+GLOWBACK_API_KEY=your-secret-key docker compose up
+
+# Set log level
+GLOWBACK_LOG_LEVEL=DEBUG docker compose up
+
+# Configure CORS origins
+GLOWBACK_CORS_ORIGINS=http://localhost:3000,https://yourdomain.com docker compose up
+```
+
+The `docker-compose.yml` configuration:
+
+```yaml
+version: "3.9"
+
+services:
+  engine:
+    build:
+      context: .
+      dockerfile: docker/engine.Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      - GLOWBACK_ENGINE_ADDR=0.0.0.0:8081
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - GLOWBACK_ENGINE_URL=http://engine:8081
+      - GLOWBACK_API_KEY=${GLOWBACK_API_KEY:-}
+    depends_on:
+      - engine
+
+  ui:
+    build:
+      context: .
+      dockerfile: docker/ui.Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      - GLOWBACK_API_URL=http://api:8000
+    depends_on:
+      - api
+```
+
+## Streamlit UI setup
+
+Run the Streamlit interface for interactive strategy development.
+
+<Steps>
+
+<Step title="Install Python dependencies">
+
+Navigate to the UI directory:
+
+```bash
+cd ui
+```
+
+Install required packages:
+
+```bash
+pip install -r requirements.txt
+```
+
+Required packages:
+- `streamlit>=1.35.0`
+- `plotly>=5.17.0`
+- `pandas>=2.1.0`
+- `numpy>=1.24.0`
+- `python-dateutil>=2.8.2`
+- `requests>=2.31.0`
+- `streamlit-ace>=0.1.1`
+- `streamlit-option-menu>=0.3.6`
+
+</Step>
+
+<Step title="Launch the UI">
+
+The easiest way to start:
+
+```bash
+python setup.py
+```
+
+This script:
+1. Installs dependencies if needed
+2. Checks for Rust bindings
+3. Launches Streamlit at `http://localhost:8501`
+
+Alternatively, run Streamlit directly:
+
+```bash
+streamlit run app.py --server.port=8501
+```
+
+</Step>
+
+<Step title="Verify the UI is running">
+
+Open [http://localhost:8501](http://localhost:8501) in your browser. You should see the GlowBack interface with navigation:
+
+1. Data Loader
+2. Strategy Editor
+3. Backtest Runner
+4. Results Dashboard
+5. Portfolio Analyzer
+6. Advanced Analytics
+
+</Step>
+
+</Steps>
+
+## Running examples
+
+GlowBack includes example code to help you get started.
+
+### Rust examples
+
+```bash
+# Basic usage example
+cargo run --example basic_usage -p gb-types
+
+# Test market simulator
+cargo test -p gb-engine simulator
+
+# Test Parquet storage
+cargo test -p gb-data parquet
+```
+
+The `basic_usage` example demonstrates:
+- Creating symbols and market data
+- Using the cache system
+- Portfolio management
+- Strategy framework
+- All four built-in strategies
+
+### Python examples
+
+Create a file `example.py`:
+
+```python
+import glowback
+
+# Initialize data manager
+manager = glowback.PyDataManager()
+manager.add_sample_provider()
+
+# Check catalog stats
+stats = manager.get_catalog_stats()
+print(f"Catalog contains {stats.total_symbols} symbols")
+print(f"Total records: {stats.total_records}")
+
+# Run a backtest
+result = glowback.run_buy_and_hold(
+    symbols=["AAPL"],
+    start_date="2023-01-01T00:00:00Z",
+    end_date="2023-12-31T23:59:59Z",
+    resolution="day",
+    initial_capital=100000.0
+)
+
+print(f"Total Return: {result.total_return:.2%}")
+print(f"Sharpe Ratio: {result.sharpe_ratio:.2f}")
+```
+
+Run the example:
+
+```bash
+python example.py
+```
+
+## Troubleshooting
+
+### Rust build errors
+
+If you encounter build errors:
+
+1. **Update Rust**: Ensure you have the latest stable version
+   ```bash
+   rustup update stable
+   ```
+
+2. **Clean build**: Remove build artifacts and rebuild
+   ```bash
+   cargo clean
+   cargo build --release
+   ```
+
+3. **Check toolchain**: Verify the correct toolchain is active
+   ```bash
+   rustup show
+   ```
+
+### Python import errors
+
+If `import glowback` fails:
+
+1. **Rebuild bindings**: Ensure maturin build completed
+   ```bash
+   cd crates/gb-python
+   maturin develop --release
+   ```
+
+2. **Check Python version**: GlowBack requires Python 3.8+
+   ```bash
+   python --version
+   ```
+
+3. **Virtual environment**: Consider using a virtual environment
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   maturin develop --release -m crates/gb-python/Cargo.toml
+   ```
+
+### Docker issues
+
+If Docker services fail to start:
+
+1. **Check Docker daemon**: Ensure Docker is running
+   ```bash
+   docker info
+   ```
+
+2. **Port conflicts**: Verify ports 8000, 8081, 8501 are available
+   ```bash
+   lsof -i :8501  # macOS/Linux
+   netstat -ano | findstr :8501  # Windows
+   ```
+
+3. **View logs**: Check service logs for errors
+   ```bash
+   docker compose logs api
+   docker compose logs engine
+   docker compose logs ui
+   ```
+
+### Streamlit UI issues
+
+If the UI doesn't load:
+
+1. **Check dependencies**: Reinstall requirements
+   ```bash
+   cd ui
+   pip install -r requirements.txt --force-reinstall
+   ```
+
+2. **Port in use**: Try a different port
+   ```bash
+   streamlit run app.py --server.port=8502
+   ```
+
+3. **Clear cache**: Remove Streamlit cache
+   ```bash
+   streamlit cache clear
+   ```
+
+## Development setup
+
+For contributing or advanced development:
+
+```bash
+# Clone with all branches
+git clone https://github.com/LatencyTDH/GlowBack.git
+cd GlowBack
+
+# Install development tools
+rustup component add rustfmt clippy
+
+# Run formatter
+cargo fmt --all
+
+# Run linter
+cargo clippy --workspace --all-targets
+
+# Run tests with coverage
+cargo test --workspace --all-features
+
+# Build documentation
+cargo doc --workspace --no-deps --open
+```
+
+## What's next?
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Run your first backtest in minutes
+  </Card>
+  <Card title="Core concepts" icon="book" href="/concepts/architecture">
+    Learn the fundamentals of GlowBack
+  </Card>
+  <Card title="Strategy development" icon="code" href="/guides/strategy-development">
+    Create custom trading strategies
+  </Card>
+  <Card title="API reference" icon="terminal" href="/api/python/overview">
+    Explore the complete API
+  </Card>
+</CardGroup>

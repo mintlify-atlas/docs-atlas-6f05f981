@@ -1,0 +1,132 @@
+---
+title: Built-in strategies
+description: Pre-built trading strategies included with GlowBack
+---
+
+GlowBack includes a library of battle-tested trading strategies that you can use out-of-the-box or customize for your needs. All strategies implement the `Strategy` trait and support event-driven backtesting.
+
+## Available strategies
+
+<CardGroup cols={2}>
+  <Card title="Buy and hold" icon="hand-holding-dollar" href="/strategies/buy-and-hold">
+    Simple long-term investment strategy that purchases and holds assets
+  </Card>
+  
+  <Card title="Moving average crossover" icon="chart-line" href="/strategies/moving-average-crossover">
+    Trend-following strategy based on short and long-term moving averages
+  </Card>
+  
+  <Card title="Momentum" icon="rocket" href="/strategies/momentum">
+    Rides trends by measuring price momentum over a lookback period
+  </Card>
+  
+  <Card title="Mean reversion" icon="arrows-rotate" href="/strategies/mean-reversion">
+    Statistical arbitrage strategy that trades price deviations from the mean
+  </Card>
+  
+  <Card title="RSI" icon="chart-area" href="/strategies/rsi">
+    Oscillator-based strategy using Relative Strength Index
+  </Card>
+</CardGroup>
+
+## Common features
+
+All built-in strategies share these capabilities:
+
+### Event-driven architecture
+
+Strategies process market events in real-time and generate trading signals based on configurable parameters:
+
+```rust
+fn on_market_event(
+    &mut self,
+    event: &MarketEvent,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String>;
+```
+
+### Configurable parameters
+
+Every strategy accepts custom parameters through the `StrategyConfig`:
+
+```rust
+let mut config = StrategyConfig::new(
+    "my_strategy".to_string(),
+    "Custom Strategy".to_string()
+);
+config.set_parameter("position_size", 0.95f64);
+config.add_symbol(symbol);
+```
+
+### Position sizing
+
+Control risk exposure with position size limits:
+
+- **position_size** - Percentage of capital to deploy (0.0 to 1.0)
+- **max_position_size** - Maximum position size cap (mean reversion only)
+
+### Performance metrics
+
+All strategies track comprehensive performance metrics:
+
+```rust
+pub struct StrategyMetrics {
+    pub total_return: Decimal,
+    pub sharpe_ratio: Option<Decimal>,
+    pub max_drawdown: Decimal,
+    pub win_rate: Decimal,
+    pub profit_factor: Decimal,
+    // ... more metrics
+}
+```
+
+## Implementation details
+
+Strategies are located in `crates/gb-types/src/strategy.rs` and implement the `Strategy` trait:
+
+```rust
+pub trait Strategy: Send + Sync {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String>;
+    fn on_market_event(&mut self, event: &MarketEvent, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn on_order_event(&mut self, event: &OrderEvent, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn on_day_end(&mut self, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn on_stop(&mut self, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn get_config(&self) -> &StrategyConfig;
+    fn get_metrics(&self) -> StrategyMetrics;
+}
+```
+
+## Quick start example
+
+Here's how to use a built-in strategy:
+
+```rust
+use gb_types::strategy::{MovingAverageCrossoverStrategy, StrategyConfig};
+use gb_types::market::Symbol;
+
+// Create strategy
+let mut strategy = MovingAverageCrossoverStrategy::new(10, 20);
+
+// Configure
+let mut config = StrategyConfig::new(
+    "ma_crossover".to_string(),
+    "My MA Strategy".to_string()
+);
+config.add_symbol(Symbol::equity("AAPL"));
+config.set_parameter("position_size", 0.90f64);
+
+// Initialize
+strategy.initialize(&config)?;
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Create custom strategies" icon="code" href="/strategies/creating-strategies">
+    Learn how to build your own trading strategies
+  </Card>
+  
+  <Card title="Backtest strategies" icon="flask" href="/guides/backtesting">
+    Run backtests with built-in strategies
+  </Card>
+</CardGroup>

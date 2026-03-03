@@ -1,0 +1,336 @@
+---
+title: Momentum strategy
+description: Trade based on price momentum and rate of change
+---
+
+The Momentum strategy measures the rate of price change over a lookback period and takes positions when momentum exceeds threshold levels. It's designed to ride trends while periodically rebalancing.
+
+## Strategy logic
+
+The strategy calculates momentum as percentage price change:
+
+1. Calculate momentum: `(current_price - past_price) / past_price * 100`
+2. **Buy signal** - Momentum > threshold (strong upward movement)
+3. **Sell signal** - Momentum < -threshold (strong downward movement)
+4. Rebalance positions at configurable frequency
+5. Adjust position size based on momentum strength
+
+## Implementation
+
+Source: `crates/gb-types/src/strategy.rs:541-697`
+
+```rust
+pub struct MomentumStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    lookback_period: usize,
+    momentum_threshold: Decimal,
+    position_size: Decimal,
+    rebalance_frequency: usize,
+    days_since_rebalance: usize,
+}
+```
+
+### Momentum calculation
+
+From `strategy.rs:576-590`:
+
+```rust
+fn calculate_momentum(&self, prices: &[Decimal]) -> Option<Decimal> {
+    if prices.len() < self.lookback_period {
+        return None;
+    }
+    
+    let current_price = prices.last()?;
+    let past_price = prices.get(prices.len() - self.lookback_period)?;
+    
+    // Calculate percentage change
+    if *past_price != Decimal::ZERO {
+        Some((*current_price - *past_price) / *past_price * Decimal::from(100))
+    } else {
+        None
+    }
+}
+```
+
+### Rebalancing logic
+
+The strategy only trades when `days_since_rebalance >= rebalance_frequency`:
+
+```rust
+fn on_market_event(&mut self, event: &MarketEvent, context: &StrategyContext) 
+    -> Result<Vec<StrategyAction>, String> 
+{
+    // Only rebalance on specified frequency
+    if self.days_since_rebalance < self.rebalance_frequency {
+        return Ok(vec![]);
+    }
+    
+    if let Some(momentum) = self.calculate_momentum(&prices) {
+        if momentum > self.momentum_threshold {
+            // Go long
+        } else if momentum < -self.momentum_threshold {
+            // Close positions or go short
+        }
+        
+        self.days_since_rebalance = 0;
+    }
+    
+    Ok(actions)
+}
+```
+
+From `strategy.rs:681-683`:
+
+```rust
+fn on_day_end(&mut self, _context: &StrategyContext) -> Result<Vec<StrategyAction>, String> {
+    self.days_since_rebalance += 1;
+    Ok(vec![])
+}
+```
+
+## Parameters
+
+<ParamField path="lookback_period" type="usize" default="10" required>
+  Number of bars to use for momentum calculation
+</ParamField>
+
+<ParamField path="momentum_threshold" type="f64" default="0.05" required>
+  Minimum momentum percentage to trigger trades (e.g., 0.05 = 5%)
+</ParamField>
+
+<ParamField path="position_size" type="f64" default="0.95">
+  Percentage of portfolio value to allocate (0.0 to 1.0)
+</ParamField>
+
+<ParamField path="rebalance_frequency" type="usize" default="5">
+  How many days between rebalancing (1 = daily, 5 = weekly for daily data)
+</ParamField>
+
+<ParamField path="symbols" type="Vec<Symbol>" required>
+  Symbols to trade with this strategy
+</ParamField>
+
+## Usage
+
+### Basic setup
+
+```rust
+use gb_types::strategy::{MomentumStrategy, StrategyConfig, Strategy};
+use gb_types::market::Symbol;
+
+// Create 10-day momentum strategy with 5% threshold
+let mut strategy = MomentumStrategy::new(10, 0.05);
+
+// Configure
+let mut config = StrategyConfig::new(
+    "momentum".to_string(),
+    "10-Day Momentum".to_string()
+);
+config.add_symbol(Symbol::equity("AAPL"));
+config.set_parameter("rebalance_frequency", 3); // Rebalance every 3 days
+
+// Initialize
+strategy.initialize(&config)?;
+```
+
+### From example code
+
+From `crates/gb-types/examples/basic_usage.rs:144-154`:
+
+```rust
+let mut momentum_strategy = MomentumStrategy::new(10, 0.05);
+let mut momentum_config = StrategyConfig::new(
+    "momentum".to_string(),
+    "Momentum".to_string()
+);
+momentum_config.add_symbol(symbol.clone());
+momentum_config.set_parameter("rebalance_frequency", 3);
+
+if let Ok(()) = momentum_strategy.initialize(&momentum_config) {
+    println!("  • Initialized: 10-day momentum with 5% threshold");
+    println!("  • Rebalance frequency: 3 days");
+}
+```
+
+## Testing
+
+From `strategy.rs:1142-1176`:
+
+```rust
+#[test]
+fn test_momentum_strategy() {
+    let mut strategy = MomentumStrategy::new(5, 0.05); // 5-day lookback, 5% threshold
+    let mut config = StrategyConfig::new(
+        "test_momentum".to_string(),
+        "Test Momentum".to_string()
+    );
+    config.add_symbol(create_test_symbol());
+    
+    assert!(strategy.initialize(&config).is_ok());
+    
+    // Create test data with strong upward momentum
+    let mut bars = Vec::new();
+    let base_time = Utc::now();
+    for i in 0..10 {
+        let price = dec!(100) * (dec!(1) + Decimal::from(i) / dec!(50)); // 2% increase per day
+        let bar = create_test_bar(price, base_time + chrono::Duration::days(i));
+        bars.push(bar);
+    }
+    
+    let context = create_test_context_with_data(bars);
+    
+    // Set to rebalance frequency
+    strategy.days_since_rebalance = 5;
+    
+    let actions = strategy.on_market_event(&event, &context);
+    assert!(actions.is_ok());
+    
+    // Test day end increment
+    let day_end_actions = strategy.on_day_end(&context);
+    assert!(day_end_actions.is_ok());
+    assert_eq!(strategy.days_since_rebalance, 1); // Resets after rebalancing
+}
+```
+
+### Momentum calculation test
+
+From `strategy.rs:1244-1256`:
+
+```rust
+#[test]
+fn test_momentum_calculation() {
+    let strategy = MomentumStrategy::new(3, 0.05);
+    let prices = vec![dec!(100), dec!(102), dec!(101), dec!(105)];
+    
+    let momentum = strategy.calculate_momentum(&prices);
+    assert!(momentum.is_some());
+    
+    let result = momentum.unwrap();
+    // (105 - 102) / 102 * 100 = 2.94% (comparing current to 3 periods ago)
+    let expected = (dec!(105) - dec!(102)) / dec!(102) * dec!(100);
+    assert!((result - expected).abs() < dec!(0.01));
+}
+```
+
+## Common configurations
+
+### Short-term momentum
+
+```rust
+let strategy = MomentumStrategy::new(3, 0.03); // 3-day, 3% threshold
+config.set_parameter("rebalance_frequency", 1); // Daily rebalancing
+// Fast-moving, responsive to recent price action
+```
+
+### Medium-term momentum
+
+```rust
+let strategy = MomentumStrategy::new(10, 0.05); // 10-day, 5% threshold
+config.set_parameter("rebalance_frequency", 5); // Weekly rebalancing
+// Balanced approach, filters out noise
+```
+
+### Long-term momentum
+
+```rust
+let strategy = MomentumStrategy::new(20, 0.10); // 20-day, 10% threshold
+config.set_parameter("rebalance_frequency", 20); // Monthly rebalancing
+// Captures sustained trends, low turnover
+```
+
+## Behavior details
+
+### Position sizing
+
+From `strategy.rs:629-652`:
+
+When momentum exceeds threshold:
+
+```rust
+if momentum > self.momentum_threshold {
+    let target_quantity = if let Some(price) = context.get_current_price(symbol) {
+        (context.get_portfolio_value() * self.position_size) / price
+    } else {
+        Decimal::ZERO
+    };
+    
+    let current_quantity = current_position.map(|p| p.quantity).unwrap_or(Decimal::ZERO);
+    let quantity_diff = target_quantity - current_quantity;
+    
+    if quantity_diff.abs() > Decimal::new(1, 4) { // Minimum trade size
+        let side = if quantity_diff > Decimal::ZERO {
+            Side::Buy
+        } else {
+            Side::Sell
+        };
+        // Place order for quantity_diff
+    }
+}
+```
+
+### Rebalancing mechanism
+
+- Tracks days since last rebalance via `on_day_end`
+- Only executes trades when `days_since_rebalance >= rebalance_frequency`
+- Resets counter to 0 after rebalancing
+- Prevents excessive trading and transaction costs
+
+## Use cases
+
+- **Trend following** - Ride sustained price movements
+- **Breakout trading** - Enter positions when momentum confirms breakouts
+- **Portfolio rotation** - Rotate into assets showing strong momentum
+- **Risk-on/risk-off** - Adjust exposure based on market momentum
+
+## Limitations
+
+<Warning>
+  Momentum strategies can suffer significant drawdowns during trend reversals. The rebalance frequency may cause delayed exits.
+</Warning>
+
+- **Trend reversals** - Slow to exit when momentum shifts
+- **Choppy markets** - Poor performance in sideways/ranging conditions
+- **Minimum trade size** - May miss small adjustments (0.0001 threshold)
+- **Single factor** - No consideration of volatility or other risk metrics
+
+## Performance characteristics
+
+- **Best in** - Strongly trending markets with persistent directional moves
+- **Worst in** - Mean-reverting or range-bound markets
+- **Turnover** - Controlled by rebalance frequency parameter
+- **Drawdowns** - Can be significant during whipsaws or reversals
+
+## Advanced usage
+
+### Multiple symbols
+
+Apply momentum ranking across a universe:
+
+```rust
+for symbol in symbols {
+    config.add_symbol(symbol);
+}
+// Strategy evaluates each symbol independently
+```
+
+### Dynamic thresholds
+
+Adjust threshold based on volatility (requires custom implementation):
+
+```rust
+let volatility_adjusted_threshold = base_threshold * current_volatility;
+config.set_parameter("momentum_threshold", volatility_adjusted_threshold);
+```
+
+## Related strategies
+
+<CardGroup cols={2}>
+  <Card title="Moving average crossover" icon="chart-line" href="/strategies/moving-average-crossover">
+    Alternative trend-following using moving averages
+  </Card>
+  
+  <Card title="Mean reversion" icon="arrows-rotate" href="/strategies/mean-reversion">
+    Opposite approach - fades momentum extremes
+  </Card>
+</CardGroup>

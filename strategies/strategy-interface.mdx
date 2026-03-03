@@ -1,0 +1,594 @@
+---
+title: Strategy interface
+description: Complete reference for the Strategy trait and related types
+---
+
+This page documents the `Strategy` trait and all related types used to implement custom trading strategies in GlowBack.
+
+## Strategy trait
+
+The core trait that all strategies must implement. Defined in `gb-types/src/strategy.rs:219`.
+
+```rust
+pub trait Strategy: Send + Sync {
+    fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String>;
+    fn on_market_event(&mut self, event: &MarketEvent, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn on_order_event(&mut self, event: &OrderEvent, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn on_day_end(&mut self, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn on_stop(&mut self, context: &StrategyContext) -> Result<Vec<StrategyAction>, String>;
+    fn get_config(&self) -> &StrategyConfig;
+    fn get_metrics(&self) -> StrategyMetrics;
+}
+```
+
+### Lifecycle methods
+
+#### initialize
+
+```rust
+fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String>
+```
+
+Called once when the strategy is first loaded. Use this to:
+
+- Store the configuration
+- Load and validate parameters
+- Initialize internal state
+- Set up indicators or data structures
+
+**Parameters:**
+- `config` - Strategy configuration with parameters and symbols
+
+**Returns:**
+- `Ok(())` on success
+- `Err(String)` with error message on failure
+
+**Example:**
+```rust
+fn initialize(&mut self, config: &StrategyConfig) -> Result<(), String> {
+    self.config = config.clone();
+    
+    // Validate required parameters
+    let period: usize = config.get_parameter("period")
+        .ok_or("Missing required parameter: period")?;
+    
+    if period < 2 {
+        return Err("Period must be at least 2".to_string());
+    }
+    
+    self.period = period;
+    self.initialized = true;
+    Ok(())
+}
+```
+
+#### on_market_event
+
+```rust
+fn on_market_event(
+    &mut self,
+    event: &MarketEvent,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String>
+```
+
+Called for every market data event (bar, tick, or quote). This is where your core trading logic lives.
+
+**Parameters:**
+- `event` - The market event (Bar, Tick, or Quote)
+- `context` - Current strategy context with portfolio and market data
+
+**Returns:**
+- `Ok(Vec<StrategyAction>)` with actions to take (place orders, log, etc.)
+- `Err(String)` with error message on failure
+
+**Example:**
+```rust
+fn on_market_event(
+    &mut self,
+    event: &MarketEvent,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String> {
+    let symbol = event.symbol();
+    let mut actions = Vec::new();
+    
+    // Get current price
+    if let Some(price) = context.get_current_price(symbol) {
+        // Check if we should buy
+        if self.should_buy(symbol, price, context) {
+            let order = Order::market_order(
+                symbol.clone(),
+                Side::Buy,
+                self.calculate_quantity(context),
+                self.config.strategy_id.clone()
+            );
+            actions.push(StrategyAction::PlaceOrder(order));
+        }
+    }
+    
+    Ok(actions)
+}
+```
+
+#### on_order_event
+
+```rust
+fn on_order_event(
+    &mut self,
+    event: &OrderEvent,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String>
+```
+
+Called when orders are filled, partially filled, canceled, or rejected.
+
+**Parameters:**
+- `event` - The order event (Filled, PartiallyFilled, Canceled, Rejected)
+- `context` - Current strategy context
+
+**Returns:**
+- `Ok(Vec<StrategyAction>)` with any actions to take
+- `Err(String)` with error message on failure
+
+**Example:**
+```rust
+fn on_order_event(
+    &mut self,
+    event: &OrderEvent,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String> {
+    match event {
+        OrderEvent::Filled { order_id, fill_price, quantity, .. } => {
+            // Track fills
+            self.last_fill_price = Some(*fill_price);
+            
+            // Log the fill
+            vec![StrategyAction::Log {
+                level: LogLevel::Info,
+                message: format!("Order {} filled at {}", order_id, fill_price),
+            }]
+        },
+        OrderEvent::Rejected { order_id, reason } => {
+            // Handle rejection
+            vec![StrategyAction::Log {
+                level: LogLevel::Warning,
+                message: format!("Order {} rejected: {}", order_id, reason),
+            }]
+        },
+        _ => Ok(vec![]),
+    }
+}
+```
+
+#### on_day_end
+
+```rust
+fn on_day_end(
+    &mut self,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String>
+```
+
+Called at the end of each trading day. Use for:
+
+- Daily rebalancing
+- End-of-day calculations
+- Updating daily metrics
+- Closing positions if needed
+
+**Parameters:**
+- `context` - Current strategy context
+
+**Returns:**
+- `Ok(Vec<StrategyAction>)` with any actions to take
+- `Err(String)` with error message on failure
+
+**Example:**
+```rust
+fn on_day_end(
+    &mut self,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String> {
+    // Increment day counter
+    self.days_since_rebalance += 1;
+    
+    // Rebalance every N days
+    if self.days_since_rebalance >= self.rebalance_frequency {
+        self.days_since_rebalance = 0;
+        return self.rebalance(context);
+    }
+    
+    Ok(vec![])
+}
+```
+
+#### on_stop
+
+```rust
+fn on_stop(
+    &mut self,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String>
+```
+
+Called when the strategy is stopped or backtesting completes. Use for:
+
+- Closing all positions
+- Finalizing metrics
+- Cleanup operations
+
+**Parameters:**
+- `context` - Current strategy context
+
+**Returns:**
+- `Ok(Vec<StrategyAction>)` with any final actions
+- `Err(String)` with error message on failure
+
+**Example:**
+```rust
+fn on_stop(
+    &mut self,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String> {
+    let mut actions = Vec::new();
+    
+    // Close all positions
+    for (symbol, position) in &context.portfolio.positions {
+        if position.quantity != Decimal::ZERO {
+            let order = Order::market_order(
+                symbol.clone(),
+                if position.quantity > Decimal::ZERO { Side::Sell } else { Side::Buy },
+                position.quantity.abs(),
+                self.config.strategy_id.clone()
+            );
+            actions.push(StrategyAction::PlaceOrder(order));
+        }
+    }
+    
+    Ok(actions)
+}
+```
+
+### Configuration methods
+
+#### get_config
+
+```rust
+fn get_config(&self) -> &StrategyConfig
+```
+
+Returns the strategy's configuration. Used by the engine to access strategy metadata.
+
+#### get_metrics
+
+```rust
+fn get_metrics(&self) -> StrategyMetrics
+```
+
+Returns current strategy metrics. The engine uses this to track performance.
+
+## StrategyContext
+
+Provides access to portfolio state, market data, and pending orders. Defined in `gb-types/src/strategy.rs:13`.
+
+```rust
+pub struct StrategyContext {
+    pub current_time: DateTime<Utc>,
+    pub portfolio: Portfolio,
+    pub market_data: HashMap<Symbol, MarketDataBuffer>,
+    pub pending_orders: Vec<Order>,
+    pub strategy_id: String,
+}
+```
+
+### Fields
+
+- `current_time` - Current simulation time
+- `portfolio` - Portfolio with positions and cash
+- `market_data` - Market data buffers for each symbol
+- `pending_orders` - Orders that haven't been filled yet
+- `strategy_id` - Unique identifier for this strategy instance
+
+### Methods
+
+#### get_position
+
+```rust
+pub fn get_position(&self, symbol: &Symbol) -> Option<&Position>
+```
+
+Returns the current position for a symbol, or None if no position exists.
+
+```rust
+if let Some(position) = context.get_position(symbol) {
+    let qty = position.quantity;
+    let avg_price = position.average_price;
+    let pnl = position.unrealized_pnl;
+}
+```
+
+#### get_current_price
+
+```rust
+pub fn get_current_price(&self, symbol: &Symbol) -> Option<Decimal>
+```
+
+Returns the most recent price for a symbol.
+
+```rust
+if let Some(price) = context.get_current_price(symbol) {
+    let position_value = position.quantity * price;
+}
+```
+
+#### get_market_data
+
+```rust
+pub fn get_market_data(&self, symbol: &Symbol) -> Option<&MarketDataBuffer>
+```
+
+Returns the market data buffer for a symbol, containing historical bars/ticks.
+
+```rust
+if let Some(buffer) = context.get_market_data(symbol) {
+    let recent_bars = buffer.get_bars(20);
+    let latest = buffer.get_latest_bar();
+}
+```
+
+#### get_available_cash
+
+```rust
+pub fn get_available_cash(&self) -> Decimal
+```
+
+Returns the amount of cash available for trading.
+
+```rust
+let cash = context.get_available_cash();
+let max_position_value = cash * Decimal::new(95, 2); // 95% of cash
+```
+
+#### get_portfolio_value
+
+```rust
+pub fn get_portfolio_value(&self) -> Decimal
+```
+
+Returns the total portfolio value (cash + positions).
+
+```rust
+let total_value = context.get_portfolio_value();
+let target_allocation = total_value * Decimal::new(20, 2); // 20% allocation
+```
+
+## MarketDataBuffer
+
+Stores recent market events for a symbol with a rolling window. Defined in `gb-types/src/strategy.rs:54`.
+
+```rust
+pub struct MarketDataBuffer {
+    pub symbol: Symbol,
+    pub data: Vec<MarketEvent>,
+    pub max_size: usize,
+}
+```
+
+### Methods
+
+#### get_current_price
+
+```rust
+pub fn get_current_price(&self) -> Option<Decimal>
+```
+
+Returns the most recent price from the buffer.
+
+#### get_latest_bar
+
+```rust
+pub fn get_latest_bar(&self) -> Option<&Bar>
+```
+
+Returns the most recent bar, or None if no bars exist.
+
+#### get_bars
+
+```rust
+pub fn get_bars(&self, count: usize) -> Vec<&Bar>
+```
+
+Returns up to `count` most recent bars in chronological order.
+
+```rust
+let bars = buffer.get_bars(20);
+let prices: Vec<Decimal> = bars.iter().map(|b| b.close).collect();
+```
+
+## StrategyAction
+
+Actions that a strategy can take. Defined in `gb-types/src/strategy.rs:108`.
+
+```rust
+pub enum StrategyAction {
+    PlaceOrder(Order),
+    CancelOrder { order_id: OrderId },
+    Log { level: LogLevel, message: String },
+    SetParameter { key: String, value: serde_json::Value },
+}
+```
+
+### Variants
+
+#### PlaceOrder
+
+Submit an order to the execution engine.
+
+```rust
+let order = Order::market_order(symbol.clone(), Side::Buy, quantity, strategy_id);
+StrategyAction::PlaceOrder(order)
+```
+
+#### CancelOrder
+
+Cancel a pending order by ID.
+
+```rust
+StrategyAction::CancelOrder { order_id: pending_order.id }
+```
+
+#### Log
+
+Emit a log message for monitoring and debugging.
+
+```rust
+StrategyAction::Log {
+    level: LogLevel::Info,
+    message: format!("Signal generated at {}", price),
+}
+```
+
+#### SetParameter
+
+Dynamically update a strategy parameter.
+
+```rust
+StrategyAction::SetParameter {
+    key: "threshold".to_string(),
+    value: serde_json::json!(0.05),
+}
+```
+
+## StrategyConfig
+
+Configuration and parameters for a strategy. Defined in `gb-types/src/strategy.rs:170`.
+
+```rust
+pub struct StrategyConfig {
+    pub strategy_id: String,
+    pub name: String,
+    pub description: String,
+    pub parameters: HashMap<String, serde_json::Value>,
+    pub symbols: Vec<Symbol>,
+    pub initial_capital: Decimal,
+    pub risk_limits: RiskLimits,
+    pub enabled: bool,
+}
+```
+
+### Methods
+
+#### new
+
+```rust
+pub fn new(strategy_id: String, name: String) -> Self
+```
+
+Create a new configuration with default values.
+
+#### add_symbol
+
+```rust
+pub fn add_symbol(&mut self, symbol: Symbol) -> &mut Self
+```
+
+Add a symbol to the strategy's universe. Returns self for chaining.
+
+```rust
+config.add_symbol(Symbol::new("AAPL", "NASDAQ", AssetClass::Equity))
+      .add_symbol(Symbol::new("MSFT", "NASDAQ", AssetClass::Equity));
+```
+
+#### set_parameter
+
+```rust
+pub fn set_parameter<T: Serialize>(&mut self, key: &str, value: T) -> &mut Self
+```
+
+Set a custom parameter. Returns self for chaining.
+
+```rust
+config.set_parameter("period", 20)
+      .set_parameter("threshold", 0.05);
+```
+
+#### get_parameter
+
+```rust
+pub fn get_parameter<T>(&self, key: &str) -> Option<T>
+where T: for<'de> Deserialize<'de>
+```
+
+Retrieve a parameter with automatic type conversion.
+
+```rust
+let period: usize = config.get_parameter("period").unwrap_or(20);
+let threshold: f64 = config.get_parameter("threshold").unwrap_or(0.05);
+```
+
+## StrategyMetrics
+
+Performance metrics for a strategy. Defined in `gb-types/src/strategy.rs:126`.
+
+```rust
+pub struct StrategyMetrics {
+    pub strategy_id: String,
+    pub start_time: DateTime<Utc>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub total_return: Decimal,
+    pub annualized_return: Decimal,
+    pub volatility: Decimal,
+    pub sharpe_ratio: Option<Decimal>,
+    pub max_drawdown: Decimal,
+    pub total_trades: u64,
+    pub winning_trades: u64,
+    pub losing_trades: u64,
+    pub win_rate: Decimal,
+    pub average_win: Decimal,
+    pub average_loss: Decimal,
+    pub profit_factor: Decimal,
+    pub total_commissions: Decimal,
+}
+```
+
+### Fields
+
+- `total_return` - Total return as a decimal (e.g., 0.25 = 25%)
+- `annualized_return` - Annualized return
+- `volatility` - Standard deviation of returns
+- `sharpe_ratio` - Risk-adjusted return metric
+- `max_drawdown` - Maximum peak-to-trough decline
+- `total_trades` - Number of completed trades
+- `win_rate` - Percentage of winning trades
+- `profit_factor` - Ratio of gross profit to gross loss
+
+## LogLevel
+
+Log levels for strategy messages. Defined in `gb-types/src/strategy.rs:117`.
+
+```rust
+pub enum LogLevel {
+    Debug,
+    Info,
+    Warning,
+    Error,
+}
+```
+
+Use appropriate levels for different types of messages:
+
+- `Debug` - Detailed diagnostic information
+- `Info` - General informational messages
+- `Warning` - Warning messages for potential issues
+- `Error` - Error messages for failures
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Creating strategies" icon="hammer" href="/strategies/creating-strategies">
+    Step-by-step guide to implementing strategies
+  </Card>
+  <Card title="Examples" icon="lightbulb" href="/strategies/examples">
+    Real-world strategy implementations
+  </Card>
+</CardGroup>

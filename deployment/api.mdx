@@ -1,0 +1,474 @@
+---
+title: API setup
+description: Deploy and configure the GlowBack FastAPI gateway
+---
+
+The GlowBack API gateway provides a FastAPI-based HTTP/WebSocket interface to the Rust backtesting engine with built-in authentication, rate limiting, and SOC2-compliant audit logging.
+
+## Overview
+
+The API gateway acts as a secure intermediary between clients and the engine service, providing:
+
+- RESTful HTTP endpoints for backtest management
+- WebSocket streaming for real-time backtest events
+- API key authentication
+- Rate limiting and abuse prevention
+- Structured JSON audit logging
+- CORS configuration
+- Security headers and CSP
+
+## Installation
+
+### Using Docker (recommended)
+
+```bash
+docker-compose up api
+```
+
+Access at: `http://localhost:8000`
+
+### Local development setup
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    cd api
+    pip install -r requirements.txt
+    ```
+    
+    **Core dependencies**:
+    - `fastapi>=0.111.0` - Web framework
+    - `uvicorn[standard]>=0.30.0` - ASGI server
+    - `pydantic>=2.7.0` - Data validation
+  </Step>
+
+  <Step title="Configure environment">
+    Create a `.env` file or export environment variables:
+    
+    ```bash
+    export GLOWBACK_ENGINE_URL=http://localhost:8081
+    export GLOWBACK_API_KEY=your-secret-key
+    ```
+  </Step>
+
+  <Step title="Run the server">
+    ```bash
+    uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ```
+    
+    Or with auto-reload for development:
+    
+    ```bash
+    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ```
+  </Step>
+</Steps>
+
+## Configuration
+
+### Environment variables
+
+#### Core settings
+
+- **`GLOWBACK_ENGINE_URL`** (required): URL to the engine service
+  - Default: `http://engine:8081` (Docker), `http://localhost:8081` (local)
+  - Example: `http://localhost:8081`
+
+- **`GLOWBACK_API_KEY`** (optional): API key(s) for authentication
+  - Default: Empty (no authentication)
+  - Format: Comma-separated keys for multiple clients
+  - Example: `key1,key2,key3`
+  - Generate with: `openssl rand -hex 32`
+
+<Warning>
+  If `GLOWBACK_API_KEY` is not set, the API runs without authentication. Always configure this in production.
+</Warning>
+
+#### Security settings
+
+- **`GLOWBACK_CORS_ORIGINS`**: Allowed CORS origins
+  - Default: Empty (CORS disabled)
+  - Format: Comma-separated URLs
+  - Example: `http://localhost:8501,https://glowback.example.com`
+
+- **`GLOWBACK_MAX_BODY_BYTES`**: Maximum request body size
+  - Default: `1048576` (1 MiB)
+  - Example: `5242880` (5 MiB)
+
+#### Logging settings
+
+- **`GLOWBACK_LOG_FORMAT`**: Log output format
+  - Default: `json`
+  - Options: `json`, `text`
+  - Production: Use `json` for structured logging
+
+- **`GLOWBACK_LOG_LEVEL`**: Minimum log level
+  - Default: `INFO`
+  - Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`
+
+### Docker configuration
+
+**Dockerfile**: `docker/api.Dockerfile`
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY api/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY api/app /app/app
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**docker-compose.yml**:
+
+```yaml
+api:
+  build:
+    context: .
+    dockerfile: docker/api.Dockerfile
+  ports:
+    - "8000:8000"
+  environment:
+    - GLOWBACK_ENGINE_URL=http://engine:8081
+    - GLOWBACK_API_KEY=${GLOWBACK_API_KEY:-}
+    - GLOWBACK_CORS_ORIGINS=http://localhost:8501
+    - GLOWBACK_LOG_FORMAT=json
+    - GLOWBACK_LOG_LEVEL=INFO
+  depends_on:
+    - engine
+```
+
+## Authentication
+
+### API key setup
+
+<Steps>
+  <Step title="Generate a secure API key">
+    ```bash
+    openssl rand -hex 32
+    ```
+    
+    Example output: `a7f3c9d8e2b4f1a6c8d9e3b7f2a5c1d8e4b9f3a7c2d6e1b8f4a9c3d7e2b5f1a6`
+  </Step>
+
+  <Step title="Configure the API">
+    Set the environment variable:
+    
+    ```bash
+    export GLOWBACK_API_KEY=a7f3c9d8e2b4f1a6c8d9e3b7f2a5c1d8e4b9f3a7c2d6e1b8f4a9c3d7e2b5f1a6
+    ```
+    
+    For multiple keys:
+    
+    ```bash
+    export GLOWBACK_API_KEY=key1,key2,key3
+    ```
+  </Step>
+
+  <Step title="Make authenticated requests">
+    Use one of three methods to provide the API key:
+    
+    **1. Authorization header (recommended)**:
+    ```bash
+    curl -H "Authorization: Bearer your-api-key" http://localhost:8000/backtests
+    ```
+    
+    **2. X-API-Key header**:
+    ```bash
+    curl -H "X-API-Key: your-api-key" http://localhost:8000/backtests
+    ```
+    
+    **3. Query parameter**:
+    ```bash
+    curl "http://localhost:8000/backtests?api_key=your-api-key"
+    ```
+  </Step>
+</Steps>
+
+### WebSocket authentication
+
+WebSocket connections support the same authentication methods:
+
+```javascript
+// Using query parameter
+const ws = new WebSocket(
+  'ws://localhost:8000/backtests/run123/stream?api_key=your-api-key'
+);
+
+// Using headers (if supported by client)
+const ws = new WebSocket('ws://localhost:8000/backtests/run123/stream', {
+  headers: { 'X-API-Key': 'your-api-key' }
+});
+```
+
+## API endpoints
+
+### Health check
+
+**GET /healthz** (no authentication required)
+
+```bash
+curl http://localhost:8000/healthz
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "version": "0.2.0"
+}
+```
+
+### Backtest management
+
+**POST /backtests** - Create a new backtest
+
+```bash
+curl -X POST http://localhost:8000/backtests \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{...}'
+```
+
+**GET /backtests** - List backtests
+
+```bash
+curl "http://localhost:8000/backtests?limit=50&state=completed" \
+  -H "Authorization: Bearer your-api-key"
+```
+
+**GET /backtests/{run_id}** - Get backtest status
+
+```bash
+curl http://localhost:8000/backtests/run123 \
+  -H "Authorization: Bearer your-api-key"
+```
+
+**GET /backtests/{run_id}/results** - Get backtest results
+
+```bash
+curl http://localhost:8000/backtests/run123/results \
+  -H "Authorization: Bearer your-api-key"
+```
+
+**WebSocket /backtests/{run_id}/stream** - Stream backtest events
+
+```javascript
+const ws = new WebSocket(
+  'ws://localhost:8000/backtests/run123/stream?api_key=your-api-key'
+);
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log('Event:', data);
+};
+```
+
+### Optimization endpoints
+
+**POST /optimizations** - Create parameter optimization run
+
+**GET /optimizations** - List optimization runs
+
+**GET /optimizations/{opt_id}** - Get optimization status
+
+**GET /optimizations/{opt_id}/results** - Get optimization results
+
+**POST /optimizations/{opt_id}/cancel** - Cancel running optimization
+
+See the [API reference](/api-reference) for complete documentation.
+
+## Rate limiting
+
+The API includes built-in rate limiting to prevent abuse. Rate limit headers are included in responses:
+
+```
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1640000000
+```
+
+## Audit logging
+
+All requests are logged in structured JSON format for audit compliance:
+
+```json
+{
+  "timestamp": "2024-01-15T10:30:45.123456Z",
+  "level": "INFO",
+  "logger": "glowback.api",
+  "message": "request_completed request_id=abc123 method=POST path=/backtests status=201 client_ip=127.0.0.1 duration_ms=45"
+}
+```
+
+Key audit events:
+- `request_completed` - All successful requests
+- `request_failed` - Failed requests with exception details
+- `api_key_rejected` - Authentication failures
+- `request_body_too_large` - Rejected oversized requests
+- `ws_connected` / `ws_disconnected` - WebSocket connections
+
+## Security features
+
+### Security headers
+
+The API automatically applies security headers to all responses:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `Permissions-Policy: geolocation=(), microphone=(), camera=()`
+- `Cache-Control: no-store`
+- `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
+- `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`
+
+### Request tracking
+
+Every request receives a unique `X-Request-ID` header for tracing:
+
+```bash
+curl -i http://localhost:8000/healthz
+```
+
+```
+X-Request-ID: 123e4567-e89b-12d3-a456-426614174000
+```
+
+Clients can provide their own request ID:
+
+```bash
+curl -H "X-Request-ID: my-custom-id" http://localhost:8000/backtests
+```
+
+## Production deployment
+
+### Using Uvicorn with workers
+
+```bash
+uvicorn app.main:app \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --workers 4 \
+  --log-level info
+```
+
+### Using Gunicorn (recommended)
+
+```bash
+gunicorn app.main:app \
+  --workers 4 \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:8000 \
+  --access-logfile - \
+  --error-logfile -
+```
+
+### Environment configuration
+
+```bash
+# Production .env file
+GLOWBACK_ENGINE_URL=http://engine:8081
+GLOWBACK_API_KEY=<secure-key-here>
+GLOWBACK_CORS_ORIGINS=https://glowback.example.com
+GLOWBACK_LOG_FORMAT=json
+GLOWBACK_LOG_LEVEL=INFO
+GLOWBACK_MAX_BODY_BYTES=5242880
+```
+
+### Reverse proxy setup
+
+Nginx configuration:
+
+```nginx
+upstream glowback_api {
+    server localhost:8000;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name api.glowback.example.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://glowback_api;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Request-ID $request_id;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+    }
+}
+```
+
+## Troubleshooting
+
+### Cannot connect to engine
+
+```bash
+# Verify engine is running
+curl http://localhost:8081
+
+# Check environment variable
+echo $GLOWBACK_ENGINE_URL
+
+# Test from API container
+docker-compose exec api curl http://engine:8081
+```
+
+### Authentication failures
+
+```bash
+# Check if API key is configured
+docker-compose exec api env | grep GLOWBACK_API_KEY
+
+# Verify API key in request
+curl -v -H "Authorization: Bearer your-key" http://localhost:8000/backtests
+```
+
+### CORS errors
+
+```bash
+# Add UI origin to CORS configuration
+export GLOWBACK_CORS_ORIGINS=http://localhost:8501
+
+# Restart API
+docker-compose restart api
+```
+
+### View logs
+
+```bash
+# Docker logs
+docker-compose logs -f api
+
+# Local logs (JSON format)
+uvicorn app.main:app --log-config logging.json
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Docker deployment" icon="docker" href="/deployment/docker">
+    Deploy with Docker Compose
+  </Card>
+  <Card title="UI setup" icon="desktop" href="/deployment/ui">
+    Configure the Streamlit interface
+  </Card>
+</CardGroup>

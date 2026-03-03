@@ -1,122 +1,116 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "GlowBack",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#FF6B35",
+    "light": "#FFB84D",
+    "dark": "#C23616"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/LatencyTDH/GlowBack"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/LatencyTDH/GlowBack"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
+            "pages": ["introduction", "quickstart", "installation"]
+          },
+          {
+            "group": "Core Concepts",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "concepts/architecture",
+              "concepts/event-driven-simulation",
+              "concepts/market-data",
+              "concepts/portfolio-management"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Guides",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "guides/strategy-development",
+              "guides/data-sources",
+              "guides/backtesting",
+              "guides/performance-analytics",
+              "guides/python-usage"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Deployment",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
-            ]
-          },
-          {
-            "group": "AI tools",
-            "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "deployment/docker",
+              "deployment/ui",
+              "deployment/api"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Rust API",
             "pages": [
-              "api-reference/introduction"
+              "api/rust/types",
+              "api/rust/data",
+              "api/rust/engine",
+              "api/rust/strategies"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Python API",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/python/overview",
+              "api/python/data-manager",
+              "api/python/backtest-engine",
+              "api/python/strategies"
+            ]
+          },
+          {
+            "group": "REST API",
+            "pages": [
+              "api/rest/overview",
+              "api/rest/backtests",
+              "api/rest/authentication"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Strategies",
+        "groups": [
+          {
+            "group": "Built-in Strategies",
+            "pages": [
+              "strategies/overview",
+              "strategies/buy-and-hold",
+              "strategies/moving-average-crossover",
+              "strategies/momentum",
+              "strategies/mean-reversion",
+              "strategies/rsi"
+            ]
+          },
+          {
+            "group": "Custom Strategies",
+            "pages": [
+              "strategies/creating-strategies",
+              "strategies/strategy-interface",
+              "strategies/examples"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

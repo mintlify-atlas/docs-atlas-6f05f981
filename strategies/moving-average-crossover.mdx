@@ -1,0 +1,296 @@
+---
+title: Moving average crossover strategy
+description: Trend-following strategy using simple moving averages
+---
+
+The Moving Average Crossover strategy generates buy and sell signals based on the relationship between short-term and long-term moving averages. It's a classic trend-following approach.
+
+## Strategy logic
+
+The strategy compares two simple moving averages (SMAs) and trades on crossovers:
+
+1. **Buy signal** - Short MA crosses above long MA (bullish crossover)
+2. **Sell signal** - Short MA crosses below long MA (bearish crossover)
+3. Position sizing uses configurable percentage of capital/portfolio value
+4. Both long and short positions are supported
+
+## Implementation
+
+Source: `crates/gb-types/src/strategy.rs:347-539`
+
+```rust
+pub struct MovingAverageCrossoverStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    short_period: usize,
+    long_period: usize,
+    position_size: Decimal,
+    last_signal: Option<Signal>,
+}
+
+enum Signal {
+    Buy,
+    Sell,
+}
+```
+
+### SMA calculation
+
+The strategy calculates simple moving averages using recent close prices:
+
+```rust
+fn calculate_sma(&self, prices: &[Decimal], period: usize) -> Option<Decimal> {
+    if prices.len() < period {
+        return None;
+    }
+    
+    let sum: Decimal = prices.iter().rev().take(period).sum();
+    Some(sum / Decimal::from(period))
+}
+```
+
+### Signal generation
+
+From `strategy.rs:435-514`:
+
+```rust
+if let (Some(short), Some(long)) = (short_ma, long_ma) {
+    let current_signal = if short > long {
+        Some(Signal::Buy)
+    } else if short < long {
+        Some(Signal::Sell)
+    } else {
+        None
+    };
+    
+    // Check for signal change
+    if current_signal != self.last_signal {
+        match current_signal {
+            Some(Signal::Buy) => {
+                // Close any short positions
+                // Open long position
+            },
+            Some(Signal::Sell) => {
+                // Close any long positions
+                // Open short position
+            },
+            None => {}
+        }
+        
+        self.last_signal = current_signal;
+    }
+}
+```
+
+## Parameters
+
+<ParamField path="short_period" type="usize" default="10" required>
+  Period for the short-term moving average (in bars)
+</ParamField>
+
+<ParamField path="long_period" type="usize" default="20" required>
+  Period for the long-term moving average (in bars)
+</ParamField>
+
+<ParamField path="position_size" type="f64" default="0.95">
+  Percentage of capital to deploy per position (0.0 to 1.0)
+</ParamField>
+
+<ParamField path="symbols" type="Vec<Symbol>" required>
+  Symbols to trade with this strategy
+</ParamField>
+
+## Usage
+
+### Basic setup
+
+```rust
+use gb_types::strategy::{MovingAverageCrossoverStrategy, StrategyConfig, Strategy};
+use gb_types::market::Symbol;
+
+// Create 5-day vs 20-day MA crossover strategy
+let mut strategy = MovingAverageCrossoverStrategy::new(5, 20);
+
+// Configure
+let mut config = StrategyConfig::new(
+    "ma_crossover".to_string(),
+    "MA Crossover 5/20".to_string()
+);
+config.add_symbol(Symbol::equity("AAPL"));
+config.set_parameter("position_size", 0.90f64);
+
+// Initialize
+strategy.initialize(&config)?;
+```
+
+### From example code
+
+From `crates/gb-types/examples/basic_usage.rs:131-141`:
+
+```rust
+let mut ma_strategy = MovingAverageCrossoverStrategy::new(5, 20);
+let mut ma_config = StrategyConfig::new(
+    "ma_crossover".to_string(),
+    "MA Crossover".to_string()
+);
+ma_config.add_symbol(symbol.clone());
+ma_config.set_parameter("position_size", 0.90f64);
+
+if let Ok(()) = ma_strategy.initialize(&ma_config) {
+    println!("  • Initialized: 5-day vs 20-day moving average crossover");
+    println!("  • Position size: 90% of capital");
+}
+```
+
+### Custom parameters
+
+From test suite `strategy.rs:1272-1286`:
+
+```rust
+// Test custom parameter handling
+let mut config = StrategyConfig::new(
+    "test_params".to_string(),
+    "Test Parameters".to_string()
+);
+config.set_parameter("short_period", 8);
+config.set_parameter("long_period", 21);
+config.set_parameter("position_size", 0.80f64);
+
+let mut ma_strategy = MovingAverageCrossoverStrategy::new(5, 10);
+assert!(ma_strategy.initialize(&config).is_ok());
+
+// Parameters are applied from config
+assert_eq!(ma_strategy.short_period, 8);
+assert_eq!(ma_strategy.long_period, 21);
+```
+
+## Testing
+
+From `strategy.rs:1112-1140`:
+
+```rust
+#[test]
+fn test_moving_average_crossover_strategy() {
+    let mut strategy = MovingAverageCrossoverStrategy::new(5, 10);
+    let mut config = StrategyConfig::new(
+        "test_ma".to_string(),
+        "Test MA Crossover".to_string()
+    );
+    config.add_symbol(create_test_symbol());
+    
+    assert!(strategy.initialize(&config).is_ok());
+    
+    // Create test data with upward trend
+    let mut bars = Vec::new();
+    let base_time = Utc::now();
+    for i in 0..15 {
+        let price = dec!(100) + Decimal::from(i); // Increasing prices
+        let bar = create_test_bar(price, base_time + chrono::Duration::days(i));
+        bars.push(bar);
+    }
+    
+    let context = create_test_context_with_data(bars);
+    
+    // Test market event processing
+    let actions = strategy.on_market_event(&event, &context);
+    assert!(actions.is_ok());
+    // Should generate buy signal as short MA crosses above long MA
+}
+```
+
+### SMA calculation test
+
+From `strategy.rs:1289-1307`:
+
+```rust
+#[test]
+fn test_sma_calculation() {
+    let strategy = MovingAverageCrossoverStrategy::new(3, 5);
+    let prices = vec![dec!(100), dec!(101), dec!(102), dec!(103), dec!(104)];
+    
+    // Test 3-period SMA
+    let sma_3 = strategy.calculate_sma(&prices, 3);
+    assert_eq!(sma_3.unwrap(), dec!(103)); // (102 + 103 + 104) / 3
+    
+    // Test 5-period SMA
+    let sma_5 = strategy.calculate_sma(&prices, 5);
+    assert_eq!(sma_5.unwrap(), dec!(102)); // (100 + 101 + 102 + 103 + 104) / 5
+    
+    // Test insufficient data
+    let sma_6 = strategy.calculate_sma(&prices, 6);
+    assert!(sma_6.is_none());
+}
+```
+
+## Common configurations
+
+### Conservative (slower signals)
+
+```rust
+let strategy = MovingAverageCrossoverStrategy::new(20, 50);
+// Less frequent trades, follows longer-term trends
+```
+
+### Aggressive (faster signals)
+
+```rust
+let strategy = MovingAverageCrossoverStrategy::new(5, 10);
+// More frequent trades, responds quickly to price changes
+```
+
+### Classic Golden Cross
+
+```rust
+let strategy = MovingAverageCrossoverStrategy::new(50, 200);
+// Traditional long-term trend following
+```
+
+## Behavior details
+
+### Position management
+
+- **Long positions** - Opened when short MA > long MA
+- **Short positions** - Opened when short MA < long MA
+- **Automatic flipping** - Closes opposing position before opening new one
+- **No partial exits** - Full position reversals only
+
+### Data requirements
+
+The strategy requires at least `long_period + 1` bars of historical data before generating signals.
+
+## Use cases
+
+- **Trend following** - Capture sustained price movements
+- **Momentum trading** - Enter trends early, exit when momentum fades
+- **Market timing** - Systematic entry/exit rules for long-term positions
+- **Multi-asset rotation** - Apply across multiple symbols for sector rotation
+
+## Limitations
+
+<Warning>
+  Moving averages lag price action. Signals occur after trend changes have begun, resulting in delayed entries and exits.
+</Warning>
+
+- **Whipsaws** - Frequent false signals in sideways markets
+- **Lag** - SMA calculations trail actual price movements
+- **Single indicator** - No confirmation from other technical signals
+- **Fixed periods** - Same MA periods across all market conditions
+
+## Performance characteristics
+
+- **Win rate** - Typically 30-45% (few large wins, many small losses)
+- **Profit factor** - Depends on trend strength and market regime
+- **Drawdowns** - Can be significant during ranging/choppy markets
+- **Best markets** - Strong trending environments
+
+## Related strategies
+
+<CardGroup cols={2}>
+  <Card title="Momentum" icon="rocket" href="/strategies/momentum">
+    Alternative trend-following approach using rate of change
+  </Card>
+  
+  <Card title="Mean reversion" icon="arrows-rotate" href="/strategies/mean-reversion">
+    Opposite philosophy - trades against trends
+  </Card>
+</CardGroup>

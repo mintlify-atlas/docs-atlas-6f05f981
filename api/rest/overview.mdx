@@ -1,0 +1,145 @@
+---
+title: REST API overview
+description: Introduction to the GlowBack REST API for backtesting and optimization
+---
+
+## Introduction
+
+The GlowBack REST API provides programmatic access to quantitative backtesting and parameter optimization. The API is built with FastAPI and follows REST conventions.
+
+**Base URL:** `http://127.0.0.1:8000` (development)
+
+**API version:** 0.2.0
+
+## Getting started
+
+All API requests require authentication via API key. Include your API key in the request headers:
+
+```bash
+curl -H "X-API-Key: your-api-key" http://127.0.0.1:8000/backtests
+```
+
+See [Authentication](/api/rest/authentication) for detailed authentication methods.
+
+## Core concepts
+
+### Backtests
+
+Backtests simulate trading strategies against historical market data. Each backtest:
+
+- Executes asynchronously and returns a `run_id` immediately
+- Progresses through states: `queued` → `running` → `completed` or `failed`
+- Produces results including equity curves, trades, and performance metrics
+- Supports real-time streaming via WebSocket
+
+### Optimizations
+
+Optimizations perform parameter searches to find optimal strategy configurations. Each optimization:
+
+- Runs multiple backtests with different parameter combinations
+- Uses grid search or other optimization algorithms
+- Tracks progress and can be cancelled mid-run
+- Returns ranked results sorted by objective metric
+
+## API resources
+
+### Backtests
+
+- [POST /backtests](/api/rest/backtests#create-backtest) - Create a new backtest
+- [GET /backtests](/api/rest/backtests#list-backtests) - List all backtests
+- [GET /backtests/:run_id](/api/rest/backtests#get-backtest) - Get backtest status
+- [GET /backtests/:run_id/results](/api/rest/backtests#get-results) - Get backtest results
+- [WS /backtests/:run_id/stream](/api/rest/backtests#stream-backtest) - Stream real-time events
+
+### Optimizations
+
+- POST /optimizations - Create a new optimization
+- GET /optimizations - List all optimizations
+- GET /optimizations/:opt_id - Get optimization status
+- GET /optimizations/:opt_id/results - Get optimization results
+- POST /optimizations/:opt_id/cancel - Cancel running optimization
+
+## Rate limiting
+
+API requests are subject to rate limiting to ensure fair usage. Rate limit headers are included in responses:
+
+- `X-RateLimit-Limit` - Total requests allowed per window
+- `X-RateLimit-Remaining` - Requests remaining in current window
+- `X-RateLimit-Reset` - Unix timestamp when the limit resets
+
+Exceeding rate limits returns a `429 Too Many Requests` response.
+
+## Request tracking
+
+All responses include an `X-Request-ID` header for log correlation and debugging. You can optionally provide your own request ID:
+
+```bash
+curl -H "X-Request-ID: custom-123" -H "X-API-Key: key" http://127.0.0.1:8000/backtests
+```
+
+## Error handling
+
+The API uses standard HTTP status codes:
+
+- `200 OK` - Successful request
+- `201 Created` - Resource created successfully
+- `400 Bad Request` - Invalid request parameters
+- `401 Unauthorized` - Missing or invalid API key
+- `404 Not Found` - Resource not found
+- `409 Conflict` - Resource not ready or operation conflict
+- `413 Request Entity Too Large` - Request body exceeds size limit (1 MiB default)
+- `429 Too Many Requests` - Rate limit exceeded
+- `500 Internal Server Error` - Server error
+
+Error responses include a `detail` field with a human-readable message:
+
+```json
+{
+  "detail": "Invalid or missing API key"
+}
+```
+
+## CORS
+
+Cross-origin resource sharing (CORS) is configurable via the `GLOWBACK_CORS_ORIGINS` environment variable. Allowed headers:
+
+- `Authorization`
+- `X-API-Key`
+- `X-Request-ID`
+- `Content-Type`
+
+Allowed methods: `GET`, `POST`
+
+## Security headers
+
+All responses include security headers:
+
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`
+- `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`
+- `Cache-Control: no-store`
+
+## Health check
+
+The `/healthz` endpoint provides a liveness probe without authentication:
+
+```bash
+curl http://127.0.0.1:8000/healthz
+```
+
+Response:
+
+```json
+{
+  "status": "healthy",
+  "version": "0.2.0"
+}
+```
+
+## Next steps
+
+- Review [Authentication](/api/rest/authentication) methods
+- Explore [Backtest endpoints](/api/rest/backtests)
+- Check out example requests in the interactive docs at `/docs`

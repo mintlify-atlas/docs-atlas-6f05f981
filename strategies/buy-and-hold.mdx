@@ -1,0 +1,177 @@
+---
+title: Buy and hold strategy
+description: Simple long-term investment strategy
+---
+
+The Buy and Hold strategy is the simplest trading strategy in GlowBack. It purchases the configured symbol on the first market event and holds the position indefinitely.
+
+## Strategy logic
+
+The strategy follows this simple algorithm:
+
+1. Wait for initialization and first market event
+2. Use 95% of available capital to buy the configured symbol
+3. Hold the position - no selling or rebalancing
+
+## Implementation
+
+Source: `crates/gb-types/src/strategy.rs:262-345`
+
+```rust
+pub struct BuyAndHoldStrategy {
+    config: StrategyConfig,
+    initialized: bool,
+    position_opened: bool,
+}
+```
+
+### Key behavior
+
+On the first market event for the configured symbol:
+
+```rust
+fn on_market_event(
+    &mut self,
+    event: &MarketEvent,
+    context: &StrategyContext,
+) -> Result<Vec<StrategyAction>, String> {
+    if !self.initialized || self.position_opened {
+        return Ok(vec![]);
+    }
+    
+    if let Some(symbol) = self.config.symbols.first() {
+        if event.symbol() == symbol {
+            let available_cash = context.get_available_cash();
+            if let Some(price) = context.get_current_price(symbol) {
+                let quantity = available_cash * Decimal::new(95, 2) / price;
+                
+                let order = Order::market_order(
+                    symbol.clone(),
+                    Side::Buy,
+                    quantity,
+                    self.config.strategy_id.clone()
+                );
+                
+                self.position_opened = true;
+                return Ok(vec![StrategyAction::PlaceOrder(order)]);
+            }
+        }
+    }
+    
+    Ok(vec![])
+}
+```
+
+## Parameters
+
+The Buy and Hold strategy has no configurable parameters beyond standard strategy configuration.
+
+<ParamField path="symbols" type="Vec<Symbol>" required>
+  Symbols to trade (typically one symbol)
+</ParamField>
+
+<ParamField path="initial_capital" type="Decimal" default="100000">
+  Starting capital for the strategy
+</ParamField>
+
+## Usage
+
+### Basic setup
+
+```rust
+use gb_types::strategy::{BuyAndHoldStrategy, StrategyConfig, Strategy};
+use gb_types::market::Symbol;
+use rust_decimal::Decimal;
+
+// Create strategy
+let mut strategy = BuyAndHoldStrategy::new();
+
+// Configure
+let mut config = StrategyConfig::new(
+    "buy_and_hold".to_string(),
+    "Buy and Hold AAPL".to_string()
+);
+config.add_symbol(Symbol::equity("AAPL"));
+config.initial_capital = Decimal::from(100000);
+
+// Initialize
+strategy.initialize(&config)?;
+```
+
+### From example code
+
+From `crates/gb-types/examples/basic_usage.rs:96-98`:
+
+```rust
+let strategy_config = StrategyConfig::new(
+    "demo_strategy".to_string(),
+    "Buy and Hold Example".to_string()
+);
+let buy_hold_strategy = BuyAndHoldStrategy::new();
+```
+
+## Testing
+
+From the test suite in `strategy.rs:1098-1110`:
+
+```rust
+#[test]
+fn test_buy_and_hold_strategy() {
+    let mut strategy = BuyAndHoldStrategy::new();
+    let config = StrategyConfig::new(
+        "test_bah".to_string(),
+        "Test Buy and Hold".to_string()
+    );
+    
+    // Initialize strategy
+    assert!(strategy.initialize(&config).is_ok());
+    assert_eq!(strategy.get_config().strategy_id, "test_bah");
+    
+    // Test metrics
+    let metrics = strategy.get_metrics();
+    assert_eq!(metrics.strategy_id, "test_bah");
+}
+```
+
+## Use cases
+
+The Buy and Hold strategy is ideal for:
+
+- **Baseline comparisons** - Compare active strategies against passive investing
+- **Long-term investing** - Simulate index fund or ETF investment strategies
+- **Testing framework** - Validate backtesting infrastructure with simple logic
+- **Education** - Learn strategy implementation patterns
+
+## Limitations
+
+<Warning>
+  This strategy does not implement any risk management, stop losses, or profit taking. It's designed for long-term holding scenarios.
+</Warning>
+
+- No rebalancing or position adjustments
+- No exit signals - position held until strategy stops
+- Single symbol only (uses first symbol in config)
+- Fixed 95% capital allocation
+
+## Metrics
+
+The strategy tracks standard metrics through `StrategyMetrics`:
+
+```rust
+let metrics = strategy.get_metrics();
+println!("Total return: {}", metrics.total_return);
+println!("Max drawdown: {}", metrics.max_drawdown);
+println!("Sharpe ratio: {:?}", metrics.sharpe_ratio);
+```
+
+## Related strategies
+
+<CardGroup cols={2}>
+  <Card title="Moving average crossover" icon="chart-line" href="/strategies/moving-average-crossover">
+    Active trend-following alternative
+  </Card>
+  
+  <Card title="Momentum" icon="rocket" href="/strategies/momentum">
+    Momentum-based approach with rebalancing
+  </Card>
+</CardGroup>

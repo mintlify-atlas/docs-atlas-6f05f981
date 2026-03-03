@@ -1,0 +1,506 @@
+---
+title: Python strategy classes
+description: Define and implement custom trading strategies
+---
+
+## Overview
+
+GlowBack allows you to create custom trading strategies by implementing Python classes with specific callback methods. Strategies receive market data events and can execute trades through a portfolio interface.
+
+## Strategy interface
+
+All strategies must implement the `on_bar` method:
+
+```python
+class MyStrategy:
+    def __init__(self):
+        self.name = "My Strategy"
+        # Initialize strategy state
+        pass
+    
+    def on_bar(self, bar, portfolio):
+        """Called for each new bar of market data
+        
+        Args:
+            bar: Bar object with OHLCV data
+            portfolio: Portfolio object for executing trades
+            
+        Returns:
+            Optional list of log messages
+        """
+        # Strategy logic here
+        return []  # Optional: return log messages
+```
+
+## Bar object
+
+The `bar` parameter provides current market data:
+
+```python
+def on_bar(self, bar, portfolio):
+    # Access bar properties
+    print(f"Symbol: {bar.symbol.symbol}")  # Symbol object
+    print(f"Timestamp: {bar.timestamp}")    # RFC3339 string
+    print(f"Open: ${bar.open}")             # float
+    print(f"High: ${bar.high}")             # float
+    print(f"Low: ${bar.low}")               # float
+    print(f"Close: ${bar.close}")           # float
+    print(f"Volume: {bar.volume}")          # float
+    print(f"Resolution: {bar.resolution}")  # string: "Day", "Hour", "Minute"
+```
+
+<ParamField path="bar.symbol" type="Symbol">
+  Symbol object with `symbol` and `exchange` attributes
+</ParamField>
+
+<ParamField path="bar.timestamp" type="str">
+  Bar timestamp in RFC3339 format (e.g., "2020-01-02T00:00:00Z")
+</ParamField>
+
+<ParamField path="bar.open" type="float">
+  Opening price for the bar
+</ParamField>
+
+<ParamField path="bar.high" type="float">
+  Highest price during the bar
+</ParamField>
+
+<ParamField path="bar.low" type="float">
+  Lowest price during the bar
+</ParamField>
+
+<ParamField path="bar.close" type="float">
+  Closing price for the bar
+</ParamField>
+
+<ParamField path="bar.volume" type="float">
+  Trading volume for the bar
+</ParamField>
+
+<ParamField path="bar.resolution" type="str">
+  Time resolution: "Day", "Hour", or "Minute"
+</ParamField>
+
+## Portfolio object
+
+The `portfolio` parameter allows executing trades and checking positions:
+
+### Methods
+
+#### buy
+
+Execute a buy order:
+
+```python
+def on_bar(self, bar, portfolio):
+    # Buy 100 shares at current close price
+    success = portfolio.buy(
+        symbol=bar.symbol.symbol,
+        shares=100,
+        price=bar.close,
+        timestamp=bar.timestamp
+    )
+    
+    if success:
+        return [f"Bought 100 shares at ${bar.close}"]
+    else:
+        return [f"Buy failed - insufficient cash"]
+```
+
+<ParamField path="symbol" type="str" required>
+  Symbol ticker string (e.g., "AAPL")
+</ParamField>
+
+<ParamField path="shares" type="float" required>
+  Number of shares to buy (can be fractional)
+</ParamField>
+
+<ParamField path="price" type="float" required>
+  Price per share
+</ParamField>
+
+<ParamField path="timestamp" type="str" default="None">
+  Optional timestamp for the trade
+</ParamField>
+
+<ParamField body="returns" type="bool">
+  True if order executed successfully, False if insufficient cash
+</ParamField>
+
+#### sell
+
+Execute a sell order:
+
+```python
+def on_bar(self, bar, portfolio):
+    # Sell 50 shares at current close price
+    success = portfolio.sell(
+        symbol=bar.symbol.symbol,
+        shares=50,
+        price=bar.close,
+        timestamp=bar.timestamp
+    )
+    
+    if success:
+        return [f"Sold 50 shares at ${bar.close}"]
+    else:
+        return [f"Sell failed - insufficient position"]
+```
+
+<ParamField path="symbol" type="str" required>
+  Symbol ticker string
+</ParamField>
+
+<ParamField path="shares" type="float" required>
+  Number of shares to sell
+</ParamField>
+
+<ParamField path="price" type="float" required>
+  Price per share
+</ParamField>
+
+<ParamField path="timestamp" type="str" default="None">
+  Optional timestamp for the trade
+</ParamField>
+
+<ParamField body="returns" type="bool">
+  True if order executed, False if insufficient position
+</ParamField>
+
+#### get_position
+
+Check current position size:
+
+```python
+def on_bar(self, bar, portfolio):
+    position = portfolio.get_position(bar.symbol.symbol)
+    
+    if position > 0:
+        return [f"Currently holding {position} shares"]
+    else:
+        return [f"No position in {bar.symbol.symbol}"]
+```
+
+<ParamField path="symbol" type="str" required>
+  Symbol ticker string
+</ParamField>
+
+<ParamField body="returns" type="float">
+  Number of shares held (0 if no position)
+</ParamField>
+
+#### get_positions
+
+Get all current positions:
+
+```python
+def on_bar(self, bar, portfolio):
+    positions = portfolio.get_positions()
+    
+    logs = []
+    for symbol, shares in positions.items():
+        logs.append(f"{symbol}: {shares} shares")
+    return logs
+```
+
+<ParamField body="returns" type="dict[str, float]">
+  Dictionary mapping symbol strings to share counts
+</ParamField>
+
+### Properties
+
+#### cash
+
+Current cash balance:
+
+```python
+def on_bar(self, bar, portfolio):
+    if portfolio.cash > 10000:
+        return [f"Cash available: ${portfolio.cash:,.2f}"]
+```
+
+#### value / total_equity
+
+Total portfolio value (cash + positions):
+
+```python
+def on_bar(self, bar, portfolio):
+    return [f"Portfolio value: ${portfolio.total_equity:,.2f}"]
+```
+
+## Example strategies
+
+### Simple moving average crossover
+
+```python
+class SMAStrategy:
+    def __init__(self, short_window=20, long_window=50):
+        self.name = "SMA Crossover Strategy"
+        self.short_window = short_window
+        self.long_window = long_window
+        self.prices = {}
+        self.position = {}
+    
+    def on_bar(self, bar, portfolio):
+        symbol = bar.symbol.symbol
+        
+        # Track price history
+        if symbol not in self.prices:
+            self.prices[symbol] = []
+        self.prices[symbol].append(bar.close)
+        
+        # Need enough history
+        if len(self.prices[symbol]) < self.long_window:
+            return []
+        
+        # Calculate moving averages
+        prices = self.prices[symbol]
+        short_ma = sum(prices[-self.short_window:]) / self.short_window
+        long_ma = sum(prices[-self.long_window:]) / self.long_window
+        
+        logs = []
+        position = portfolio.get_position(symbol)
+        
+        # Buy signal: short MA crosses above long MA
+        if short_ma > long_ma and position == 0:
+            shares = int(portfolio.cash * 0.95 / bar.close)
+            if shares > 0:
+                portfolio.buy(symbol, shares, bar.close, bar.timestamp)
+                logs.append(f"BUY: {shares} shares at ${bar.close:.2f}")
+                logs.append(f"  Short MA: {short_ma:.2f}, Long MA: {long_ma:.2f}")
+        
+        # Sell signal: short MA crosses below long MA
+        elif short_ma < long_ma and position > 0:
+            portfolio.sell(symbol, position, bar.close, bar.timestamp)
+            logs.append(f"SELL: {position} shares at ${bar.close:.2f}")
+            logs.append(f"  Short MA: {short_ma:.2f}, Long MA: {long_ma:.2f}")
+        
+        return logs
+```
+
+### RSI mean reversion
+
+```python
+class RSIStrategy:
+    def __init__(self, period=14, oversold=30, overbought=70):
+        self.name = "RSI Mean Reversion"
+        self.period = period
+        self.oversold = oversold
+        self.overbought = overbought
+        self.prices = {}
+    
+    def calculate_rsi(self, prices):
+        """Calculate RSI indicator"""
+        if len(prices) < self.period + 1:
+            return 50  # Neutral RSI
+        
+        # Calculate price changes
+        deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+        
+        # Separate gains and losses
+        gains = [d if d > 0 else 0 for d in deltas[-self.period:]]
+        losses = [-d if d < 0 else 0 for d in deltas[-self.period:]]
+        
+        # Calculate average gain/loss
+        avg_gain = sum(gains) / self.period
+        avg_loss = sum(losses) / self.period
+        
+        if avg_loss == 0:
+            return 100
+        
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+    
+    def on_bar(self, bar, portfolio):
+        symbol = bar.symbol.symbol
+        
+        # Track price history
+        if symbol not in self.prices:
+            self.prices[symbol] = []
+        self.prices[symbol].append(bar.close)
+        
+        # Calculate RSI
+        rsi = self.calculate_rsi(self.prices[symbol])
+        
+        logs = []
+        position = portfolio.get_position(symbol)
+        
+        # Buy when oversold
+        if rsi < self.oversold and position == 0:
+            shares = int(portfolio.cash * 0.95 / bar.close)
+            if shares > 0:
+                portfolio.buy(symbol, shares, bar.close, bar.timestamp)
+                logs.append(f"BUY: RSI oversold at {rsi:.1f}")
+                logs.append(f"  Purchased {shares} shares at ${bar.close:.2f}")
+        
+        # Sell when overbought
+        elif rsi > self.overbought and position > 0:
+            portfolio.sell(symbol, position, bar.close, bar.timestamp)
+            logs.append(f"SELL: RSI overbought at {rsi:.1f}")
+            logs.append(f"  Sold {position} shares at ${bar.close:.2f}")
+        
+        return logs
+```
+
+### Multi-symbol portfolio rebalancing
+
+```python
+class RebalanceStrategy:
+    def __init__(self, rebalance_frequency=20):
+        self.name = "Portfolio Rebalancing"
+        self.rebalance_frequency = rebalance_frequency  # days
+        self.bar_count = 0
+        self.target_weights = {}  # Will be set dynamically
+    
+    def on_bar(self, bar, portfolio):
+        symbol = bar.symbol.symbol
+        self.bar_count += 1
+        
+        # Rebalance every N bars
+        if self.bar_count % self.rebalance_frequency != 0:
+            return []
+        
+        # Get all positions
+        positions = portfolio.get_positions()
+        
+        # Equal weight target
+        num_symbols = len(positions) if positions else 1
+        target_weight = 1.0 / num_symbols
+        
+        # Calculate current portfolio value
+        total_value = portfolio.total_equity
+        target_value = total_value * target_weight
+        
+        # Rebalance current symbol
+        position = portfolio.get_position(symbol)
+        current_value = position * bar.close
+        
+        logs = []
+        
+        if current_value < target_value * 0.95:  # Underweight
+            # Buy more
+            target_shares = target_value / bar.close
+            shares_to_buy = target_shares - position
+            if shares_to_buy > 0 and portfolio.cash > shares_to_buy * bar.close:
+                portfolio.buy(symbol, shares_to_buy, bar.close, bar.timestamp)
+                logs.append(f"REBALANCE BUY: {shares_to_buy:.2f} shares")
+        
+        elif current_value > target_value * 1.05:  # Overweight
+            # Sell excess
+            target_shares = target_value / bar.close
+            shares_to_sell = position - target_shares
+            if shares_to_sell > 0:
+                portfolio.sell(symbol, shares_to_sell, bar.close, bar.timestamp)
+                logs.append(f"REBALANCE SELL: {shares_to_sell:.2f} shares")
+        
+        return logs
+```
+
+## Using custom strategies
+
+To use a custom strategy, pass it to a backtest framework:
+
+```python
+# For Streamlit UI or custom backtest runner
+strategy_code = '''
+class MyStrategy:
+    def __init__(self):
+        self.name = "My Custom Strategy"
+    
+    def on_bar(self, bar, portfolio):
+        # Your strategy logic
+        return []
+'''
+
+# In your backtest runner
+namespace = {}
+exec(strategy_code, namespace)
+
+# Find and instantiate strategy
+strategy_classes = [obj for obj in namespace.values() 
+                   if isinstance(obj, type) and hasattr(obj, 'on_bar')]
+strategy = strategy_classes[0]()
+
+# Run backtest (implementation specific)
+# ...
+```
+
+<Note>
+The current Python API uses a simplified portfolio interface. For production Rust-backed strategies with full event-driven execution, see the [Rust Strategy API](/api/rust/strategies).
+</Note>
+
+## Best practices
+
+### 1. Track state efficiently
+
+```python
+class EfficientStrategy:
+    def __init__(self):
+        self.prices = {}  # Use dicts for multi-symbol tracking
+        self.indicators = {}
+    
+    def on_bar(self, bar, portfolio):
+        symbol = bar.symbol.symbol
+        
+        # Initialize symbol-specific state
+        if symbol not in self.prices:
+            self.prices[symbol] = []
+            self.indicators[symbol] = {}
+```
+
+### 2. Handle insufficient data gracefully
+
+```python
+def on_bar(self, bar, portfolio):
+    symbol = bar.symbol.symbol
+    
+    if len(self.prices[symbol]) < self.required_history:
+        return []  # Skip trading until enough data
+    
+    # Proceed with strategy logic
+```
+
+### 3. Use position sizing
+
+```python
+def on_bar(self, bar, portfolio):
+    # Risk 2% of portfolio per trade
+    risk_amount = portfolio.total_equity * 0.02
+    shares = int(risk_amount / bar.close)
+    
+    # Or use fixed fractional allocation
+    allocation = 0.25  # 25% of portfolio
+    shares = int(portfolio.cash * allocation / bar.close)
+```
+
+### 4. Return informative logs
+
+```python
+def on_bar(self, bar, portfolio):
+    logs = []
+    
+    if some_condition:
+        logs.append(f"Signal detected: {signal_value:.2f}")
+        logs.append(f"Current position: {portfolio.get_position(symbol)}")
+        logs.append(f"Cash: ${portfolio.cash:,.2f}")
+    
+    return logs
+```
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="BacktestEngine" icon="gauge" href="/api/python/backtest-engine">
+    Run backtests with your strategies
+  </Card>
+  <Card title="Strategy examples" icon="book" href="/strategies/examples">
+    More complete strategy examples
+  </Card>
+  <Card title="Performance metrics" icon="chart-line" href="/guides/performance-analytics">
+    Understanding strategy performance
+  </Card>
+  <Card title="Rust strategies" icon="rust" href="/api/rust/strategies">
+    Production-grade Rust strategy API
+  </Card>
+</CardGroup>

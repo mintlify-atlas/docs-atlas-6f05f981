@@ -1,0 +1,276 @@
+---
+title: Docker deployment
+description: Deploy GlowBack using Docker and docker-compose
+---
+
+GlowBack provides a complete Docker-based deployment with three services: the Rust engine, FastAPI gateway, and Streamlit UI.
+
+## Architecture overview
+
+The Docker deployment consists of three containerized services:
+
+- **Engine** (port 8081): Rust-based backtesting engine service
+- **API** (port 8000): FastAPI gateway for HTTP/WebSocket access
+- **UI** (port 8501): Streamlit web interface
+
+## Prerequisites
+
+- Docker Engine 20.10+
+- Docker Compose 2.0+
+- 2GB+ available memory
+
+## Quick start
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/LatencyTDH/glowback.git
+    cd glowback
+    ```
+  </Step>
+
+  <Step title="Set environment variables (optional)">
+    Create a `.env` file for API authentication:
+    
+    ```bash
+    # Optional: Set API key for authentication
+    GLOWBACK_API_KEY=your-secret-key-here
+    ```
+    
+    If `GLOWBACK_API_KEY` is not set, the API will run without authentication.
+  </Step>
+
+  <Step title="Start all services">
+    ```bash
+    docker-compose up --build
+    ```
+    
+    This builds and starts all three services:
+    - Engine service at `http://localhost:8081`
+    - API gateway at `http://localhost:8000`
+    - Streamlit UI at `http://localhost:8501`
+  </Step>
+
+  <Step title="Access the UI">
+    Open your browser to `http://localhost:8501` to access the GlowBack interface.
+  </Step>
+</Steps>
+
+## Service configuration
+
+### Engine service
+
+**Dockerfile**: `docker/engine.Dockerfile`
+
+```yaml
+engine:
+  build:
+    context: .
+    dockerfile: docker/engine.Dockerfile
+  ports:
+    - "8081:8081"
+  environment:
+    - GLOWBACK_ENGINE_ADDR=0.0.0.0:8081
+```
+
+**Environment variables**:
+
+- `GLOWBACK_ENGINE_ADDR`: Bind address for the engine service (default: `0.0.0.0:8081`)
+
+### API service
+
+**Dockerfile**: `docker/api.Dockerfile`
+
+```yaml
+api:
+  build:
+    context: .
+    dockerfile: docker/api.Dockerfile
+  ports:
+    - "8000:8000"
+  environment:
+    - GLOWBACK_ENGINE_URL=http://engine:8081
+    - GLOWBACK_API_KEY=${GLOWBACK_API_KEY:-}
+  depends_on:
+    - engine
+```
+
+**Environment variables**:
+
+- `GLOWBACK_ENGINE_URL`: Internal URL to the engine service (default: `http://engine:8081`)
+- `GLOWBACK_API_KEY`: Optional API key for authentication (comma-separated for multiple keys)
+
+### UI service
+
+**Dockerfile**: `docker/ui.Dockerfile`
+
+```yaml
+ui:
+  build:
+    context: .
+    dockerfile: docker/ui.Dockerfile
+  ports:
+    - "8501:8501"
+  environment:
+    - GLOWBACK_API_URL=http://api:8000
+  depends_on:
+    - api
+```
+
+**Environment variables**:
+
+- `GLOWBACK_API_URL`: Internal URL to the API gateway (default: `http://api:8000`)
+
+## Common operations
+
+### Run in detached mode
+
+```bash
+docker-compose up -d
+```
+
+### View logs
+
+```bash
+# All services
+docker-compose logs -f
+
+# Specific service
+docker-compose logs -f engine
+docker-compose logs -f api
+docker-compose logs -f ui
+```
+
+### Stop services
+
+```bash
+docker-compose down
+```
+
+### Rebuild after code changes
+
+```bash
+docker-compose up --build
+```
+
+### Clean rebuild (remove volumes)
+
+```bash
+docker-compose down -v
+docker-compose up --build
+```
+
+## Port mapping
+
+| Service | Internal Port | Host Port | Description |
+|---------|--------------|-----------|-------------|
+| Engine  | 8081         | 8081      | gRPC/HTTP engine service |
+| API     | 8000         | 8000      | FastAPI gateway |
+| UI      | 8501         | 8501      | Streamlit interface |
+
+To customize host ports, edit the `docker-compose.yml` file:
+
+```yaml
+ports:
+  - "<host-port>:<container-port>"
+```
+
+## Production considerations
+
+### Security
+
+<Warning>
+  Always set `GLOWBACK_API_KEY` in production to enable authentication.
+</Warning>
+
+```bash
+# Generate a secure API key
+openssl rand -hex 32
+```
+
+### Resource limits
+
+Add resource constraints to `docker-compose.yml`:
+
+```yaml
+services:
+  engine:
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+```
+
+### Persistent data
+
+Mount volumes for data persistence:
+
+```yaml
+services:
+  engine:
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+```
+
+### Health checks
+
+Docker Compose health check example:
+
+```yaml
+services:
+  api:
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+## Troubleshooting
+
+### Engine service fails to start
+
+```bash
+# Check engine logs
+docker-compose logs engine
+
+# Verify port availability
+lsof -i :8081
+```
+
+### API cannot connect to engine
+
+```bash
+# Verify engine is running
+docker-compose ps
+
+# Check network connectivity
+docker-compose exec api ping engine
+```
+
+### UI cannot connect to API
+
+```bash
+# Verify API health
+curl http://localhost:8000/healthz
+
+# Check UI environment
+docker-compose exec ui env | grep GLOWBACK
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="API setup" icon="code" href="/deployment/api">
+    Configure the FastAPI gateway
+  </Card>
+  <Card title="UI setup" icon="desktop" href="/deployment/ui">
+    Customize the Streamlit interface
+  </Card>
+</CardGroup>

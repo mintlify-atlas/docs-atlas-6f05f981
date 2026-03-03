@@ -1,0 +1,242 @@
+---
+title: API authentication
+description: Authenticate requests to the GlowBack REST API
+---
+
+## Overview
+
+All GlowBack API endpoints (except `/healthz`) require authentication via API key. The API supports multiple authentication methods for flexibility across different client types.
+
+## Setting up API keys
+
+API keys are configured server-side via the `GLOWBACK_API_KEY` environment variable:
+
+```bash
+# Single key
+export GLOWBACK_API_KEY="your-secret-key"
+
+# Multiple keys (comma-separated)
+export GLOWBACK_API_KEY="key1,key2,key3"
+
+uvicorn app.main:app
+```
+
+If `GLOWBACK_API_KEY` is not set, the API runs in development mode without authentication (not recommended for production).
+
+## Authentication methods
+
+### Authorization header (Bearer token)
+
+The recommended method for production applications:
+
+```bash
+curl -H "Authorization: Bearer your-api-key" \
+  http://127.0.0.1:8000/backtests
+```
+
+<ParamField header="Authorization" type="string" required>
+  Bearer token in the format: `Bearer your-api-key`
+</ParamField>
+
+### Custom header (X-API-Key)
+
+A simpler alternative for internal tools and scripts:
+
+```bash
+curl -H "X-API-Key: your-api-key" \
+  http://127.0.0.1:8000/backtests
+```
+
+<ParamField header="X-API-Key" type="string" required>
+  API key value
+</ParamField>
+
+### Query parameter (WebSocket)
+
+Primarily for WebSocket connections where setting headers may be difficult:
+
+```javascript
+const ws = new WebSocket(
+  'ws://127.0.0.1:8000/backtests/run-id/stream?api_key=your-api-key'
+);
+```
+
+<ParamField query="api_key" type="string" required>
+  API key value in the query string
+</ParamField>
+
+<Warning>
+  Query parameter authentication exposes the API key in URLs and logs. Use header-based authentication when possible.
+</Warning>
+
+## WebSocket authentication
+
+WebSocket connections at `/backtests/:run_id/stream` support all three authentication methods:
+
+<CodeGroup>
+```javascript Query parameter (easiest)
+const ws = new WebSocket(
+  'ws://127.0.0.1:8000/backtests/run-id/stream?api_key=your-api-key'
+);
+```
+
+```javascript Authorization header
+const ws = new WebSocket('ws://127.0.0.1:8000/backtests/run-id/stream');
+ws.setRequestHeader('Authorization', 'Bearer your-api-key');
+```
+
+```javascript X-API-Key header
+const ws = new WebSocket('ws://127.0.0.1:8000/backtests/run-id/stream');
+ws.setRequestHeader('X-API-Key', 'your-api-key');
+```
+</CodeGroup>
+
+Note that browser WebSocket APIs don't support custom headers, so query parameter authentication is often required for web applications.
+
+## Authentication priority
+
+When multiple authentication methods are provided, the API checks them in this order:
+
+1. `Authorization` header (Bearer token)
+2. `X-API-Key` header
+3. `api_key` query parameter
+
+The first valid key found is used. If no valid key is provided, the request is rejected with a `401 Unauthorized` response.
+
+## Error responses
+
+### Missing API key
+
+If no API key is provided:
+
+```json
+{
+  "detail": "Invalid or missing API key"
+}
+```
+
+HTTP Status: `401 Unauthorized`
+
+### Invalid API key
+
+If the provided API key doesn't match any configured keys:
+
+```json
+{
+  "detail": "Invalid or missing API key"
+}
+```
+
+HTTP Status: `401 Unauthorized`
+
+### WebSocket authentication failure
+
+WebSocket connections close immediately with code `1008 Policy Violation` if authentication fails.
+
+## Security best practices
+
+### Protect your API keys
+
+- Never commit API keys to version control
+- Use environment variables or secure secret management
+- Rotate keys regularly
+- Use different keys for development and production
+
+### Use HTTPS in production
+
+Always use HTTPS in production to prevent API keys from being intercepted:
+
+```bash
+# Development (HTTP)
+http://127.0.0.1:8000/backtests
+
+# Production (HTTPS)
+https://api.example.com/backtests
+```
+
+### Enable HSTS
+
+The API includes Strict-Transport-Security headers to enforce HTTPS:
+
+```
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+```
+
+### Avoid query parameter authentication
+
+Prefer header-based authentication to prevent keys from appearing in:
+
+- Server access logs
+- Browser history
+- Referrer headers
+- Browser developer tools
+
+Only use query parameter authentication for WebSocket connections when headers aren't supported.
+
+## Audit logging
+
+All authentication attempts are logged for security auditing:
+
+```json
+{
+  "timestamp": "2023-01-15T10:30:00.000Z",
+  "level": "WARNING",
+  "logger": "glowback.api.auth",
+  "message": "api_key_rejected request_id=abc123 method=GET path=/backtests client_ip=192.168.1.1 key_status=absent"
+}
+```
+
+Log fields:
+- `request_id` - Unique request identifier for correlation
+- `method` - HTTP method
+- `path` - Request path
+- `client_ip` - Client IP address
+- `key_status` - `present` or `absent`
+
+Configure structured logging with:
+
+```bash
+export GLOWBACK_LOG_FORMAT="json"  # or "text"
+export GLOWBACK_LOG_LEVEL="INFO"   # DEBUG, INFO, WARNING, ERROR
+```
+
+## Request correlation
+
+Include an `X-Request-ID` header to correlate requests across logs:
+
+```bash
+curl -H "X-Request-ID: custom-trace-123" \
+     -H "X-API-Key: your-api-key" \
+     http://127.0.0.1:8000/backtests
+```
+
+The server echoes the request ID in the response headers and includes it in all log entries.
+
+## Testing authentication
+
+### With authentication
+
+```bash
+# Should succeed
+curl -H "X-API-Key: your-api-key" http://127.0.0.1:8000/backtests
+```
+
+### Without authentication
+
+```bash
+# Should fail with 401
+curl http://127.0.0.1:8000/backtests
+```
+
+### Health check (no auth required)
+
+```bash
+# Should succeed without API key
+curl http://127.0.0.1:8000/healthz
+```
+
+## Next steps
+
+- Review [Backtest endpoints](/api/rest/backtests) to start making authenticated requests
+- Check the [REST API overview](/api/rest/overview) for general API information
+- Explore the interactive API docs at `/docs` on your server
